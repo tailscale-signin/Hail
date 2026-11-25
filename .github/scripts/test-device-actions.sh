@@ -78,6 +78,7 @@ curl --fail --location --silent --show-error --retry 3 -o "$upstream" \
 echo "3be0c4a210b0472198ea3b675fcbd5720fa16288dcff119557644ea947003236  $upstream" | sha256sum -c -
 "$sdk_tools/apksigner" verify "$upstream"
 release_dir=app/build/outputs/apk/release
+release_version=$(jq -er '.elements[0].versionName' "$release_dir/output-metadata.json")
 release_apk="$release_dir/$(jq -r '.elements[0].outputFile' "$release_dir/output-metadata.json")"
 "$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture --out "$fixture_dir/fork.apk" "$release_apk"
 # Build the last affected fork release so we can install the fix over its real settings and disabled packages.
@@ -129,7 +130,7 @@ for server in shell root; do
                 if [[ -n $path ]] && adb pull "$path" "$report/decision-$server.jsonl" >/dev/null && [[ -s $report/decision-$server.jsonl ]]; then break; fi
                 sleep 1
             done
-            python3 .github/scripts/check-decision-log.py "$report/decision-$server.jsonl" "$server"
+            python3 .github/scripts/check-decision-log.py "$report/decision-$server.jsonl" "$server" "$release_version"
         fi
         grep 'HailParity.*Android verified' "$report/backend-$distribution-$server.log" | tail -n 1 >> "$report/parity.log"
     done
