@@ -29,6 +29,17 @@
     <string name="action_tag_add">Add tag</string>
     <string name="action_tag_remove">Remove tag</string>
     <string name="action_tag_set">Set tag</string>
+    <string name="add_all_app_shortcuts">Add all app shortcuts to Home screen</string>
+    <string name="add_all_app_shortcuts_summary">Create a shortcut for each app in your Hail list.</string>
+    <string name="shortcut_batch_empty">Add apps to Hail first.</string>
+    <string name="shortcut_batch_unsupported">Your current launcher does not support adding Home screen shortcuts.</string>
+    <string name="shortcut_batch_progress">%1$s (%2$d of %3$d)</string>
+    <string name="shortcut_batch_prompt">Confirm the shortcut in your launcher. If you dismiss a prompt, you can retry or skip that app.</string>
+    <string name="shortcut_batch_legacy">Your launcher receives one request per app. On this Android version, running this again may create duplicates.</string>
+    <string name="shortcut_batch_failed">The launcher request failed. Retry or skip this app.</string>
+    <string name="shortcut_batch_result">%1$d added · %2$d already pinned · %3$d skipped</string>
+    <string name="shortcut_batch_legacy_result">%1$d requests sent · %2$d skipped. Check your Home screen for the shortcuts.</string>
+    <string name="shortcut_batch_retry">Retry</string>
     <string name="action_add_pin_shortcut">Add to Home screen</string>
     <string name="action_export_clipboard">Export to Clipboard</string>
     <string name="action_import_clipboard">Import from Clipboard</string>

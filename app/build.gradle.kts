@@ -15,14 +15,16 @@ android {
     }.standardOutput.asText.get().trim()
 
     namespace = "com.aistra.hail"
-    compileSdk = 36
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
 
     defaultConfig {
         applicationId = "com.aistra.hail"
         minSdk = 23
-        targetSdk = 36
-        versionCode = 35
-        versionName = "1.11.0"
+        targetSdk = 37
+        versionCode = 36
+        versionName = "1.12.0"
     }
 
     buildTypes {
@@ -88,10 +90,11 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     debugImplementation(libs.androidx.ui.tooling)
     implementation(libs.androidx.appcompat)
-    implementation(libs.androidx.biometric.ktx)
+    implementation(libs.androidx.biometric)
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.livedata.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.navigation.fragment.ktx)
     implementation(libs.androidx.navigation.ui.ktx)
     implementation(libs.androidx.preference.ktx)
@@ -109,4 +112,5 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.hiddenapibypass)
     compileOnly(libs.libxposed.api)
+    testImplementation(libs.junit)
 }
