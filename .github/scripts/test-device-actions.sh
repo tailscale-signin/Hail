@@ -69,3 +69,38 @@ timeout 7m adb shell am instrument -w -r -e class "$classes" -e hailCiFixtures t
 adb logcat -d -s HailTiming:I > "$report/timings.txt"
 adb logcat -d -s Hail:E HailSystemApp:I > "$report/system-app.log"
 python3 .github/scripts/check-device-results.py "$report/runner.txt"
+
+# Compare the official release and the optimized fork in the same user on the same disposable Android image.
+./gradlew :app:assembleRelease
+upstream="$fixture_dir/upstream.apk"
+curl --fail --location --silent --show-error --retry 3 -o "$upstream" \
+    https://github.com/aistra0528/Hail/releases/download/v1.11.0/Hail-v1.11.0.apk
+echo "3be0c4a210b0472198ea3b675fcbd5720fa16288dcff119557644ea947003236  $upstream" | sha256sum -c -
+"$sdk_tools/apksigner" verify "$upstream"
+release_dir=app/build/outputs/apk/release
+release_apk="$release_dir/$(jq -r '.elements[0].outputFile' "$release_dir/output-metadata.json")"
+"$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture --out "$fixture_dir/fork.apk" "$release_apk"
+for server in shell root; do
+    uid=2000
+    if [[ $server == root ]]; then
+        adb root
+        adb wait-for-device
+        test "$(adb shell id -u | tr -d '\r')" = 0
+        adb shell "$shizuku_dir/lib/x86_64/libshizuku.so"
+        uid=0
+    fi
+    pid="$(adb shell pidof shizuku_server | tr -d '\r')"
+    [[ $pid =~ ^[0-9]+$ ]]
+    test "$(adb shell "stat -c %u /proc/$pid" | tr -d '\r')" = "$uid"
+    for distribution in upstream fork; do
+        if adb shell pm path com.aistra.hail | tr -d '\r' | grep -q '^package:'; then adb uninstall com.aistra.hail; fi
+        adb install "$fixture_dir/$distribution.apk"
+        output="$report/parity-$distribution-$server.txt"
+        timeout 3m adb shell am instrument -w -r -e class com.aistra.hail.ui.apps.ReleaseSystemAppsTest \
+            -e hailReleaseParity true -e server "$server" -e distribution "$distribution" \
+            com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output"
+        grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
+        grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"
+    done
+done
+adb logcat -d -s HailParity:I > "$report/parity.log"

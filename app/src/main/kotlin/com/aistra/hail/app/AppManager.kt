@@ -37,26 +37,31 @@ object AppManager {
 
     fun isAppFrozen(info: ApplicationInfo, mode: String = HailData.workingMode): Boolean = when {
         mode.endsWith(HailData.STOP) -> info.flags and ApplicationInfo.FLAG_STOPPED != 0
-        mode.endsWith(HailData.DISABLE) -> !HPackages.isEnabledForUser(info)
+        mode.endsWith(HailData.DISABLE) -> !HPackages.UserPackage(info, true).canDisable()
         mode.endsWith(HailData.HIDE) -> HPackages.isHidden(info)
         mode.endsWith(HailData.SUSPEND) -> HTarget.N && info.flags and ApplicationInfo.FLAG_SUSPENDED != 0
         else -> !info.enabled || HPackages.isHidden(info) || (HTarget.N && info.flags and ApplicationInfo.FLAG_SUSPENDED != 0)
     }
 
-    fun state(pkg: HPackages.UserPackage?, mode: String = HailData.workingMode): AppInfo.State = when {
-        pkg == null || !pkg.installed -> AppInfo.State.NOT_FOUND
-        isAppFrozen(pkg.info, mode) -> AppInfo.State.FROZEN
-        else -> AppInfo.State.UNFROZEN
+    fun state(pkg: HPackages.UserPackage?, mode: String = HailData.workingMode, requestedFrozen: Boolean? = null): AppInfo.State {
+        if (pkg == null || !pkg.installed) return AppInfo.State.NOT_FOUND
+        val frozen = if (mode.endsWith(HailData.DISABLE)) {
+            val setting = pkg.setting()
+            // Android can reactivate DISABLED_UNTIL_USED on first use. Either explicit request must reach the backend.
+            if (setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED) requestedFrozen == false
+            else !pkg.canDisable(setting)
+        } else pkg.info?.let { isAppFrozen(it, mode) } == true
+        return if (frozen) AppInfo.State.FROZEN else AppInfo.State.UNFROZEN
     }
 
     suspend fun snapshotFrozenStates(apps: List<AppInfo>): Map<String, Boolean> = mutations.withLock {
         withContext(Dispatchers.IO) {
             val mode = HailData.workingMode
-            val inventory by lazy { HPackages.packagesForUser() }
+            val lookup = PackageLookup(mode)
             buildMap {
                 for (item in apps) {
                     if (item.packageName == BuildConfig.APPLICATION_ID) continue
-                    val current = state(HPackages.findForUser(item.packageName) { inventory[it] }, mode)
+                    val current = state(lookup.find(item.packageName), mode)
                     if (current != AppInfo.State.NOT_FOUND) put(item.packageName, current == AppInfo.State.FROZEN)
                 }
             }
@@ -68,13 +73,13 @@ object AppManager {
         return mutations.withLock {
             withContext(Dispatchers.IO) {
                 val infoByPackage = mutableMapOf<String, ApplicationInfo>()
-                val inventory by lazy { HPackages.packagesForUser() }
+                val lookup = PackageLookup(mode)
                 var androidError: String? = null
                 val result = FreezeBatch.run(packages, BuildConfig.APPLICATION_ID, frozen,
                     state = { pkg ->
-                        val record = HPackages.findForUser(pkg) { inventory[it] }
-                        if (includeLabel && record != null) infoByPackage[pkg] = record.info
-                        state(record, mode)
+                        val record = lookup.find(pkg)
+                        if (includeLabel) record?.info?.let { infoByPackage[pkg] = it }
+                        state(record, mode, frozen)
                     },
                     apply = { batch ->
                         when (mode) {
@@ -82,7 +87,7 @@ object AppManager {
                             HailData.MODE_DHIZUKU_SUSPEND -> HDhizuku.setSuspended(batch, frozen)
                             else -> batch.filterTo(linkedSetOf()) { pkg ->
                                 try {
-                                    setAppFrozen(pkg, frozen, mode)
+                                    setAppFrozen(pkg, frozen, mode, lookup)
                                 } catch (e: CancellationException) {
                                     throw e
                                 } catch (e: Exception) {
@@ -161,7 +166,7 @@ object AppManager {
         }
     }
 
-    private fun setAppFrozen(packageName: String, frozen: Boolean, mode: String): Boolean =
+    private fun setAppFrozen(packageName: String, frozen: Boolean, mode: String, lookup: PackageLookup): Boolean =
         when (mode) {
             HailData.MODE_OWNER_HIDE -> HPolicy.setAppHidden(packageName, frozen)
             HailData.MODE_DHIZUKU_HIDE -> HDhizuku.setAppHidden(packageName, frozen)
@@ -170,7 +175,7 @@ object AppManager {
             HailData.MODE_SU_HIDE -> HShell.setAppHidden(packageName, frozen)
             HailData.MODE_SU_SUSPEND -> HShell.setAppSuspended(packageName, frozen)
             HailData.MODE_SHIZUKU_STOP -> frozen && HShizuku.forceStopApp(packageName)
-            HailData.MODE_SHIZUKU_DISABLE -> HShizuku.setAppDisabled(packageName, frozen)
+            HailData.MODE_SHIZUKU_DISABLE -> lookup.shizuku?.setDisabled(packageName, frozen) == true
             HailData.MODE_SHIZUKU_HIDE -> HShizuku.setAppHidden(packageName, frozen)
             HailData.MODE_SHIZUKU_SUSPEND -> HShizuku.setAppSuspended(packageName, frozen)
             HailData.MODE_ISLAND_HIDE -> HIsland.setAppHidden(packageName, frozen)

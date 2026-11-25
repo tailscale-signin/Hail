@@ -161,12 +161,13 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         listJob = viewLifecycleOwner.lifecycleScope.launch {
             val rows = withContext(Dispatchers.IO) {
                 val collator = Collator.getInstance()
-                val packages = if (snapshot.isEmpty()) emptyMap() else HPackages.packagesForUser()
+                val lookup = PackageLookup(mode)
+                val packages = if (snapshot.isEmpty()) emptyMap() else lookup.all()
                 snapshot.mapNotNull { row ->
                     ensureActive()
                     val pkg = row.info.packageName
                     val listed = packages[pkg]
-                    val record = if (listed?.installed == true) listed else HPackages.findForUser(pkg, packages::get)
+                    val record = if (listed?.installed == true) listed else lookup.find(pkg)
                     val application = record?.info
                     val label = application?.loadLabel(app.packageManager)?.toString() ?: pkg
                     if (search.isNotEmpty() && !(nineKey && NineKeySearch.search(search, pkg, label))
@@ -624,7 +625,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         val tagId = tag?.second ?: 0
         val mode = HailData.workingMode
         val packages = withContext(Dispatchers.IO) {
-            HPackages.packagesForUser().values.filter { it.installed && AppManager.isAppFrozen(it.info, mode) }.map { it.info.packageName }
+            PackageLookup(mode).all().filterValues { AppManager.state(it, mode) == AppInfo.State.FROZEN }.keys
         }
         val added = packages.filterNot(HailData::isChecked)
         added.forEach { HailData.addCheckedApp(it, tagId, false) }

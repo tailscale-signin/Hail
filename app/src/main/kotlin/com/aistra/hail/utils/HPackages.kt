@@ -17,7 +17,15 @@ object HPackages {
     @Suppress("DEPRECATION")
     private const val INSTALLED_FOR_USER = PackageManager.GET_DISABLED_COMPONENTS
 
-    data class UserPackage(val info: ApplicationInfo, val installed: Boolean)
+    data class UserPackage(val info: ApplicationInfo?, val installed: Boolean, val enabledSetting: Int? = null) {
+        fun setting() = enabledSetting ?: info?.let { currentEnabledSetting(it.packageName) }
+
+        fun canDisable(setting: Int? = setting()): Boolean = when (setting) {
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER -> false
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> true
+            else -> info?.enabled == true
+        }
+    }
 
     private fun knownPackage(info: ApplicationInfo) = UserPackage(info, info.flags and ApplicationInfo.FLAG_INSTALLED != 0)
 
@@ -73,18 +81,8 @@ object HPackages {
     fun isSystemApp(info: ApplicationInfo): Boolean =
         info.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
 
-    fun isEnabledForUser(info: ApplicationInfo): Boolean = runCatching {
-        when (app.packageManager.getApplicationEnabledSetting(info.packageName)) {
-            PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> true
-            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-            PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER,
-            PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> false
-            else -> info.enabled
-        }
-    }.getOrDefault(info.enabled)
-
-    fun hasRequestedEnabledSetting(packageName: String, disabled: Boolean): Boolean =
-        findForUser(packageName)?.takeIf { it.installed }?.let { isEnabledForUser(it.info) == !disabled } == true
+    fun currentEnabledSetting(pkg: String): Int? =
+        runCatching { app.packageManager.getApplicationEnabledSetting(pkg) }.getOrNull()
 
     private val privateFlags by lazy { runCatching { ApplicationInfo::class.java.getField("privateFlags") }.getOrNull() }
     fun isHidden(info: ApplicationInfo): Boolean = runCatching { (privateFlags?.getInt(info) ?: 0) and 1 != 0 }.getOrDefault(false)
@@ -120,9 +118,12 @@ object HPackages {
     }
 
     fun setAppDisabled(packageName: String, disabled: Boolean): Boolean {
-        val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        if (disabled && app.checkSelfPermission("android.permission.FORCE_STOP_PACKAGES") == PackageManager.PERMISSION_GRANTED) {
+            forceStopApp(packageName)
+        }
         app.packageManager.setApplicationEnabledSetting(packageName, newState, 0)
-        return hasRequestedEnabledSetting(packageName, disabled)
+        return app.packageManager.getApplicationEnabledSetting(packageName) == newState
     }
 
     @RequiresApi(Build.VERSION_CODES.P)

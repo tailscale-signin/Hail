@@ -24,7 +24,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import rikka.shizuku.Shizuku
+import com.aistra.hail.utils.HShizuku
+import com.aistra.hail.utils.PackageLookup
 
 class PackageStatusDialog : DialogFragment() {
     companion object {
@@ -80,21 +81,21 @@ class PackageStatusDialog : DialogFragment() {
 
     private suspend fun render() {
         val mode = HailData.workingMode
-        val record = withContext(Dispatchers.IO) { HPackages.findForUser(pkg) }
-        val enabled = if (record?.installed == true) withContext(Dispatchers.IO) { HPackages.isEnabledForUser(record.info) } else null
         val method = when {
             mode.endsWith(HailData.DISABLE) -> mode
-            enabled != null && withContext(Dispatchers.IO) {
-                runCatching { Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
-            } -> HailData.MODE_SHIZUKU_DISABLE
+            withContext(Dispatchers.IO) { HShizuku.isAuthorized() } -> HailData.MODE_SHIZUKU_DISABLE
             else -> null
         }
+        val record = withContext(Dispatchers.IO) { PackageLookup(method ?: mode).find(pkg) }
+        val setting = withContext(Dispatchers.IO) { record?.setting() }
+        val enabled = record?.takeIf { it.installed }?.canDisable(setting)
         val alert = dialog as? AlertDialog ?: return
         val modeName = resources.getStringArray(R.array.working_mode_entries).getOrNull(HailData.WORKING_MODE_VALUES.indexOf(mode)) ?: mode
         val label = record?.info?.loadLabel(requireContext().packageManager)?.toString() ?: pkg
         alert.setTitle(label)
         val status = when (enabled) {
-            true -> R.string.package_enabled
+            true -> if (setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
+                R.string.package_until_used else R.string.package_enabled
             false -> R.string.package_disabled
             null -> if (record == null) R.string.package_unknown_here else R.string.package_retained_here
         }

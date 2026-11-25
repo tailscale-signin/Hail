@@ -3,6 +3,7 @@ package com.aistra.hail.utils
 import android.annotation.SuppressLint
 import android.app.AppOpsManager
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
@@ -65,18 +66,44 @@ object HShizuku {
         false
     }
 
-    fun setAppDisabled(packageName: String, disabled: Boolean): Boolean {
-        val pm = asInterface("android.content.pm.IPackageManager", "package")
-        val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-        pm::class.java.getMethod(
-            "setApplicationEnabledSetting",
-            String::class.java,
-            Int::class.java,
-            Int::class.java,
-            Int::class.java,
-            String::class.java
-        ).invoke(pm, packageName, newState, 0, HPackages.myUserId, callerPackage)
-        return HPackages.hasRequestedEnabledSetting(packageName, disabled)
+    fun isAuthorized() = runCatching {
+        Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+    }.getOrDefault(false)
+
+    class Packages {
+        private val pm = asInterface("android.content.pm.IPackageManager", "package")
+        private val flagType = if (HTarget.T) Long::class.javaPrimitiveType!! else Int::class.javaPrimitiveType!!
+        // Installed for this user, including apps with disabled launcher components.
+        private val flags: Any = if (HTarget.T) PackageManager.GET_DISABLED_COMPONENTS.toLong() else PackageManager.GET_DISABLED_COMPONENTS
+        private val user = HPackages.myUserId
+
+        fun setting(pkg: String) = pm.javaClass.getMethod("getApplicationEnabledSetting", String::class.java, Int::class.java)
+            .invoke(pm, pkg, user) as Int
+
+        fun find(pkg: String): HPackages.UserPackage? {
+            val info = pm.javaClass.getMethod("getApplicationInfo", String::class.java, flagType, Int::class.java)
+                .invoke(pm, pkg, flags, user) as? ApplicationInfo ?: return null
+            return HPackages.UserPackage(info, true, setting(pkg))
+        }
+
+        fun installed(): List<ApplicationInfo> {
+            val slice = pm.javaClass.getMethod("getInstalledApplications", flagType, Int::class.java).invoke(pm, flags, user)
+            return (slice.javaClass.getMethod("getList").invoke(slice) as List<*>).filterIsInstance<ApplicationInfo>()
+        }
+
+        fun setDisabled(packageName: String, disabled: Boolean): Boolean {
+            val newState = when {
+                !disabled -> PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                isRoot -> PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                else -> PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+            }
+            if (disabled) forceStopApp(packageName)
+            pm.javaClass.getMethod(
+                "setApplicationEnabledSetting", String::class.java, Int::class.java, Int::class.java,
+                Int::class.java, String::class.java
+            ).invoke(pm, packageName, newState, 0, user, BuildConfig.APPLICATION_ID)
+            return setting(packageName) == newState
+        }
     }
 
     fun setAppHidden(packageName: String, hidden: Boolean): Boolean {
