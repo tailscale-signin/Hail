@@ -119,7 +119,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
         menu: ContextMenu, v: View, menuInfo: ContextMenu.ContextMenuInfo?
     ) {
         val holder = (menuInfo as? HRecyclerView.RecyclerViewContextMenuInfo)?.viewHolder as? AppsAdapter.ViewHolder ?: return
-        val info = holder.info
+        val info = appsAdapter.currentList.getOrNull(holder.bindingAdapterPosition)?.info ?: return
         contextApp = info
         menu.setHeaderTitle(info.loadLabel(activity.packageManager))
         activity.menuInflater.inflate(R.menu.menu_apps_action, menu)
