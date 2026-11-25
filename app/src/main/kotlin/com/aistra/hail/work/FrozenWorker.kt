@@ -18,6 +18,6 @@ class FrozenWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             return Result.failure()
         }
         val result = AppManager.changeFrozen(listOf(pkg), frozen, includeLabel = false, trace = trace)
-        return if (result.reachedTarget(pkg)) Result.success() else Result.failure()
+        return if (result.reachedTarget(pkg, frozen)) Result.success() else Result.failure()
     }
 }

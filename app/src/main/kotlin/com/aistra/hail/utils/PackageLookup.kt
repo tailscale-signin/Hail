@@ -32,21 +32,34 @@ class PackageLookup(private val mode: String, private val trace: DecisionTrace? 
         } ?: record
     }
 
-    fun all(): Map<String, UserPackage> {
-        val service = shizuku
+    private val serviceInventory by lazy {
+        shizuku?.let { service ->
+            runCatching { service.installed() }.onFailure { trace?.error("binder_inventory_failed", null, it) }.getOrNull()
+        }
+    }
+
+    private val inventory by lazy {
+        val installed = serviceInventory
         val roots = root
         trace?.event("inventory", null, "reader" to "PackageManager", "entries" to local.size)
-        if (service == null && roots == null) return local
-        return local.toMutableMap().apply {
-            if (service != null) {
-                val installed = runCatching { service.installed() }.onFailure { trace?.error("binder_inventory_failed", null, it) }.getOrNull()
-                trace?.event("inventory", null, "reader" to "Shizuku IPackageManager", "entries" to installed?.size)
-                installed?.forEach { info ->
-                    put(info.packageName, UserPackage(info, true))
-                }
-            }
+        if (shizuku != null) trace?.event("inventory", null, "reader" to "Shizuku IPackageManager", "entries" to installed?.size)
+        if (installed == null && roots == null) local else local.toMutableMap().apply {
+            installed?.forEach { put(it.packageName, UserPackage(it, true)) }
             roots?.forEach { (pkg, enabled) -> put(pkg, rootRecord(pkg, get(pkg), enabled)) }
         }
+    }
+
+    fun all(): Map<String, UserPackage> = inventory
+
+    /** A complete privileged inventory plus retained metadata can settle absence without probing each package again. */
+    fun fromInventory(pkg: String, forChange: Boolean = false): UserPackage? {
+        val record = inventory[pkg]
+        if (record == null || (!record.installed && serviceInventory == null && root == null)) return find(pkg)
+        trace?.event("lookup", pkg, "reader" to "current-user batch inventory", "installed" to record.installed)
+        val service = shizuku
+        if (!forChange || !record.installed || service == null) return record
+        val setting = runCatching { service.setting(pkg) }.onFailure { trace?.error("binder_setting_failed", pkg, it) }.getOrNull()
+        return record.copy(enabledSetting = setting)
     }
 
     private fun rootRecord(pkg: String, local: UserPackage?, enabled: Boolean): UserPackage {

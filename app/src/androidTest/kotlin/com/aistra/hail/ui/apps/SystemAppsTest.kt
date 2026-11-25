@@ -232,12 +232,12 @@ class SystemAppsTest {
             assertTrue(shell("pm list packages -u --user $user $pkg").lineSequence().any { it == installed })
             assertEquals(false, HPackages.findForUser(pkg)?.installed)
             assertEquals(false, HPackages.packagesForUser()[pkg]?.installed)
-            assertEquals(setOf(pkg), runBlocking { AppManager.changeFrozen(listOf(pkg), true) }.missing)
+            assertEquals(setOf(pkg), runBlocking { AppManager.changeFrozen(listOf(pkg), true) }.notInstalled)
             assertFalse(listed())
             instrumentation.runOnMainSync { HailData.checkedList.clear(); HailData.checkedList.add(AppInfo(pkg)) }
             ActivityScenario.launch(MainActivity::class.java).use {
                 await(By.res(ctx.packageName, "nav_home")).click()
-                await(text(R.string.package_unavailable))
+                await(text(R.string.package_inactive_here))
                 val row = By.res(ctx.packageName, "app_name").text(label)
                 await(row).longClick()
                 fun report(id: Int) = By.res(ctx.packageName, "report").textContains(ctx.getString(id))
@@ -250,7 +250,7 @@ class SystemAppsTest {
                 await(report(R.string.package_enabled))
                 device.pressBack()
                 await(row)
-                assertTrue(device.wait(Until.gone(text(R.string.package_unavailable)), 10_000))
+                assertTrue(device.wait(Until.gone(text(R.string.package_inactive_here)), 10_000))
             }
             Log.i("HailSystemApp", "Verified retained $pkg, no mutation while absent, restored current-user Home controls")
         } finally {
@@ -265,7 +265,7 @@ class SystemAppsTest {
         val missingFlag = ApplicationInfo(info).apply { flags = flags and ApplicationInfo.FLAG_INSTALLED.inv() }
         val verified = HPackages.UserPackage(missingFlag, true)
         assertEquals(AppInfo.State.UNFROZEN, AppManager.state(verified, HailData.MODE_SHIZUKU_DISABLE))
-        assertEquals(AppInfo.State.NOT_FOUND, AppManager.state(verified.copy(installed = false), HailData.MODE_SHIZUKU_DISABLE))
+        assertEquals(AppInfo.State.NOT_INSTALLED, AppManager.state(verified.copy(installed = false), HailData.MODE_SHIZUKU_DISABLE))
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { host ->
                 val adapter = PagerAdapter()

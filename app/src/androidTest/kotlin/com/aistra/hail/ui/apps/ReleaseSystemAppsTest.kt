@@ -60,7 +60,7 @@ class ReleaseSystemAppsTest {
         finally { host.uiAutomation.dropShellPermissionIdentity() }
     }
 
-    private fun configure(packages: List<String>) {
+    private fun configure(packages: List<String>, systemApps: Boolean = true) {
         await(res("nav_settings")).click()
         await(text(R.string.working_mode)).click()
         await(text(R.string.mode_shizuku_disable)).click()
@@ -68,9 +68,11 @@ class ReleaseSystemAppsTest {
             .text(Pattern.compile("Allow all the time", Pattern.CASE_INSENSITIVE))), 4_000)?.click()
         await(text(R.string.mode_shizuku_disable))
         await(res("nav_apps")).click()
-        menu(R.string.filter_by, "action_apps_filter")
-        await(text(R.string.filter_system_apps)).click()
-        await(text(R.string.action_continue)).click()
+        if (systemApps) {
+            menu(R.string.filter_by, "action_apps_filter")
+            await(text(R.string.filter_system_apps)).click()
+            await(text(R.string.action_continue)).click()
+        }
         menu(R.string.action_search, "action_search")
         for (pkg in packages) {
             await(res("search_src_text")).text = pkg
@@ -104,6 +106,46 @@ class ReleaseSystemAppsTest {
         await(text(R.string.package_status_controls)).click()
     }
 
+    @Test fun measuresBulkDisableAndEnableOnInstalledFixtures() {
+        val args = InstrumentationRegistry.getArguments()
+        assumeTrue(args.getString("hailBulkBenchmark") == "true")
+        val baseline = args.getString("distribution") == "baseline"
+        val packages = (1..12).map { "com.aistra.hail.testfixture.bench$it" }
+        fun stopped(pkg: String) = pm.getApplicationInfo(pkg, 0).flags and ApplicationInfo.FLAG_STOPPED != 0
+        fun shell(command: String) = ParcelFileDescriptor.AutoCloseInputStream(host.uiAutomation.executeShellCommand(command))
+            .bufferedReader().use { it.readText() }
+        try {
+            packages.forEach { setFixture(it, PackageManager.COMPONENT_ENABLED_STATE_ENABLED) }
+            context.startActivity(requireNotNull(pm.getLaunchIntentForPackage(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            if (baseline) configure(packages, systemApps = false)
+            await(res("nav_settings")).click()
+            settingsItem(R.string.debug_logging)
+            await(res("nav_home")).click()
+            repeat(6) {
+                // Model a mixed workload: one running app and eleven that Android has already stopped.
+                packages.forEach { shell("am force-stop $it") }
+                val active = packages.first()
+                context.startActivity(requireNotNull(pm.getLaunchIntentForPackage(active)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                assertTrue(device.wait(Until.hasObject(By.pkg(active)), 10_000))
+                assertFalse(stopped(active))
+                device.pressBack()
+                await(res("nav_home"))
+                assertEquals(11, packages.count(::stopped))
+                menu(R.string.action_freeze_all, "action_freeze_all")
+                packages.forEach { expectSetting(it, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) }
+                val deadline = SystemClock.elapsedRealtime() + 10_000
+                while (!stopped(active) && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(20)
+                assertTrue(packages.all(::stopped))
+                menu(R.string.action_unfreeze_all, "action_unfreeze_all")
+                packages.forEach { expectSetting(it, PackageManager.COMPONENT_ENABLED_STATE_ENABLED) }
+            }
+            exportLog(if (baseline) "benchmark-baseline" else "benchmark-current")
+        } finally {
+            packages.forEach { setFixture(it, PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) }
+            device.pressHome()
+        }
+    }
+
     @Test fun freezesAndThawsFromHome() {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("hailReleaseParity") == "true")
@@ -116,7 +158,7 @@ class ReleaseSystemAppsTest {
         when (distribution) {
             "upstream" -> assertEquals("1.11.0", apk.versionName)
             "legacy" -> assertEquals("1.13.2", apk.versionName)
-            "fork" -> assertTrue(apk.longVersionCode >= 40)
+            "fork" -> assertTrue(apk.longVersionCode == 41L)
             else -> error("Unknown APK $distribution")
         }
         val packages = listOf("com.android.deskclock", listOf("com.android.dreams.basic", "com.android.printspooler")
@@ -169,6 +211,14 @@ class ReleaseSystemAppsTest {
                     expectSetting(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
                 }
                 device.pressBack()
+                setFixture(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
+                menu(R.string.action_freeze_all, "action_freeze_all")
+                expectSetting(packages.first(), disableState)
+                if (root) expectSetting(pkg, disableState) else {
+                    await(By.text(Pattern.compile("(?s).*Shell cannot change component state.*")))
+                    expectSetting(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
+                    await(text(android.R.string.ok)).click()
+                }
                 exportLog(if (root) "root" else "shell")
             }
             if (legacy) {

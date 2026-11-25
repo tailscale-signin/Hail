@@ -24,7 +24,7 @@ class BackupViewModel : ViewModel() {
         data object Busy : State
         data class Preview(val data: BackupContent, val appsJson: String, val tagsJson: String, val applyStates: Boolean = false) : State
         data object Saved : State
-        data class Restored(val changed: Int? = null, val unchanged: Int = 0, val unavailable: Int = 0, val failed: Int = 0) : State
+        data class Restored(val changed: Int? = null, val unchanged: Int = 0, val unavailable: Int = 0, val failed: Int = 0, val notInstalled: Int = 0) : State
         data object Failed : State
     }
 
@@ -90,7 +90,7 @@ class BackupViewModel : ViewModel() {
                     AppManager.changeFrozen(packages, frozen, includeLabel = false, trace = trace)
                 }
                 current.value = State.Restored(results.sumOf { it.changed.size }, results.sumOf { it.unchanged.size },
-                    results.sumOf { it.missing.size }, results.sumOf { it.failed.size })
+                    results.sumOf { it.missing.size }, results.sumOf { it.failed.size }, results.sumOf { it.notInstalled.size })
             } else {
                 trace?.skipped(null, if (saved.isEmpty()) "Backup contains no saved states" else "Restore of saved states was not selected")
                 current.value = State.Restored()

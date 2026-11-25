@@ -36,7 +36,7 @@ JSON
 adb shell -T 'run-as com.aistra.hail.debug sh -c "cat > files/v1/tags.json"' <<'JSON'
 [{"tag":"Default","id":0},{"tag":"Legacy","id":-91}]
 JSON
-for name in one two; do
+for name in one two bench{1..12}; do
     cat > "$fixture_dir/AndroidManifest.xml" <<XML
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.aistra.hail.testfixture.$name" android:versionCode="1" android:versionName="1">
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="36" />
@@ -74,6 +74,16 @@ adb logcat -d -s HailTiming:I > "$report/timings.txt"
 adb logcat -d -s Hail:E HailSystemApp:I > "$report/system-app.log"
 python3 .github/scripts/check-device-results.py "$report/runner.txt"
 
+pull_trace() {
+    local sample="$1" destination="$2" path
+    for _ in {1..15}; do
+        path=$(adb shell "find /storage/emulated/0 -type f -name 'Hail-trace-$sample.jsonl*' 2>/dev/null" | tr -d '\r' | head -n 1) || true
+        if [[ -n $path ]] && adb pull "$path" "$destination" >/dev/null && [[ -s $destination ]]; then return 0; fi
+        sleep 1
+    done
+    return 1
+}
+
 # Compare the official release and the optimized fork in the same user on the same disposable Android image.
 ./gradlew :app:assembleRelease
 upstream="$fixture_dir/upstream.apk"
@@ -85,14 +95,32 @@ release_dir=app/build/outputs/apk/release
 release_version=$(jq -er '.elements[0].versionName' "$release_dir/output-metadata.json")
 release_apk="$release_dir/$(jq -r '.elements[0].outputFile' "$release_dir/output-metadata.json")"
 "$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture --out "$fixture_dir/fork.apk" "$release_apk"
-# Build the last affected fork release so we can install the fix over its real settings and disabled packages.
-previous=c6608891e5f1a2719e57e51db3645e7c701a2c29
-git fetch --quiet --no-tags origin "$previous"
-git worktree add --quiet --detach "$fixture_dir/previous-src" "$previous"
-(cd "$fixture_dir/previous-src" && ./gradlew :app:assembleRelease)
-previous_apk="$fixture_dir/previous-src/app/build/outputs/apk/release/Hail-v1.13.2.apk"
-"$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture --out "$fixture_dir/legacy.apk" "$previous_apk"
-git worktree remove --force "$fixture_dir/previous-src"
+build_previous() {
+    local sha="$1" version="$2" name="$3" work="$fixture_dir/previous-src"
+    git fetch --depth=1 origin "$sha"
+    git worktree add --detach "$work" "$sha"
+    (cd "$work" && ./gradlew :app:assembleRelease)
+    local apk="$work/app/build/outputs/apk/release/Hail-v$version.apk"
+    "$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture --out "$fixture_dir/$name.apk" "$apk"
+    git worktree remove --force "$work"
+}
+build_previous c6608891e5f1a2719e57e51db3645e7c701a2c29 1.13.2 legacy
+build_previous 6a978311499cbabb0655e6cfed2e5328c5aed7ad 1.13.3 baseline
+
+# The same app list, emulator and authorized shell service are used on both sides of an in-place update.
+for distribution in baseline current; do
+    apk=baseline
+    if [[ $distribution == current ]]; then apk=fork; fi
+    adb install --no-incremental -r "$fixture_dir/$apk.apk"
+    output="$report/benchmark-$distribution.txt"
+    timeout 5m adb shell am instrument -w -r -e class 'com.aistra.hail.ui.apps.ReleaseSystemAppsTest#measuresBulkDisableAndEnableOnInstalledFixtures' \
+        -e hailBulkBenchmark true -e distribution "$distribution" com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output"
+    grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
+    grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"
+    pull_trace "benchmark-$distribution" "$report/benchmark-$distribution.jsonl"
+done
+python3 .github/scripts/check-bulk-performance.py "$report" | tee "$report/bulk-performance.txt"
+
 for server in shell root; do
     uid=2000
     if [[ $server == root ]]; then
@@ -122,18 +150,14 @@ for server in shell root; do
             adb install --no-incremental "$fixture_dir/$distribution.apk"
         fi
         output="$report/parity-$distribution-$server.txt"
-        timeout 4m adb shell am instrument -w -r -e class com.aistra.hail.ui.apps.ReleaseSystemAppsTest \
+        timeout 4m adb shell am instrument -w -r -e class 'com.aistra.hail.ui.apps.ReleaseSystemAppsTest#freezesAndThawsFromHome' \
             -e hailReleaseParity true -e server "$server" -e distribution "$distribution" \
             com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output"
         adb logcat -d -s Hail:E HailParity:I | tail -n 90 > "$report/backend-$distribution-$server.log"
         grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
         grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"
         if [[ $distribution == fork ]]; then
-            for _ in {1..15}; do
-                path=$(adb shell "find /storage/emulated/0 -type f -name 'Hail-trace-$server.jsonl*' 2>/dev/null" | tr -d '\r' | head -n 1) || true
-                if [[ -n $path ]] && adb pull "$path" "$report/decision-$server.jsonl" >/dev/null && [[ -s $report/decision-$server.jsonl ]]; then break; fi
-                sleep 1
-            done
+            pull_trace "$server" "$report/decision-$server.jsonl"
             python3 .github/scripts/check-decision-log.py "$report/decision-$server.jsonl" "$server" "$release_version"
         fi
         grep 'HailParity.*Android verified' "$report/backend-$distribution-$server.log" | tail -n 1 >> "$report/parity.log"

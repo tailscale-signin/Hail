@@ -47,7 +47,7 @@ object AppManager {
               trace: DecisionTrace? = null, name: String? = pkg?.info?.packageName): AppInfo.State {
         if (pkg == null || !pkg.installed) {
             trace?.event("package_state", name, "installed" to false, "retainedMetadata" to (pkg != null))
-            return AppInfo.State.NOT_FOUND
+            return if (pkg == null) AppInfo.State.NOT_FOUND else AppInfo.State.NOT_INSTALLED
         }
         val frozen = if (mode.endsWith(HailData.DISABLE)) {
             // The installed inventory carries effective enablement. Read an exact override for a requested change.
@@ -85,7 +85,7 @@ object AppManager {
                 for (item in apps) {
                     if (item.packageName == BuildConfig.APPLICATION_ID) continue
                     val current = state(lookup.find(item.packageName), mode)
-                    if (current != AppInfo.State.NOT_FOUND) put(item.packageName, current == AppInfo.State.FROZEN)
+                    if (!current.unavailable) put(item.packageName, current == AppInfo.State.FROZEN)
                 }
             }
         }
@@ -109,34 +109,52 @@ object AppManager {
                             targetSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED -> "Privileged backend uses full disable"
                             else -> "Disable backend is unavailable"
                         })
-                    var androidError: String? = null
+                    val failureReasons = mutableMapOf<String, String>()
+                    val singleWrites = mutableSetOf<String>()
+                    val shellDisable = mode == HailData.MODE_SHIZUKU_DISABLE &&
+                        lookup.disableSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+                    fun recordFailure(pkg: String, error: Exception) {
+                        if (error is CancellationException) throw error
+                        trace?.error("android_error", pkg, error)
+                        HLog.e(error)
+                        val cause = (error as? InvocationTargetException)?.targetException ?: error
+                        failureReasons[pkg] = (cause.message?.lineSequence()?.firstOrNull() ?: cause.javaClass.simpleName).take(350)
+                    }
                     val result = FreezeBatch.run(packages, BuildConfig.APPLICATION_ID, frozen,
                         state = { pkg ->
-                            val record = lookup.find(pkg)
+                            val record = if (packages.size >= 8) lookup.fromInventory(pkg, forChange = true) else lookup.find(pkg)
+                            if (shellDisable &&
+                                (record?.enabledSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED ||
+                                    record?.enabledSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED)) singleWrites.add(pkg)
                             if (includeLabel) record?.info?.let { infoByPackage[pkg] = it }
                             state(record, mode, targetSetting, trace, pkg)
                         },
                         trace = trace,
                         apply = { batch ->
                             val succeeded = when (mode) {
+                                HailData.MODE_SHIZUKU_DISABLE -> {
+                                    val service = lookup.shizuku
+                                    if (service == null) {
+                                        trace?.skipped(null, "Authorized Shizuku package service unavailable")
+                                        emptySet()
+                                    } else service.setDisabled(batch, frozen, singleWrites, trace, ::recordFailure)
+                                }
                                 HailData.MODE_OWNER_SUSPEND -> HPolicy.setSuspended(batch, frozen, trace)
                                 HailData.MODE_DHIZUKU_SUSPEND -> HDhizuku.setSuspended(batch, frozen, trace)
                                 else -> batch.filterTo(linkedSetOf()) { pkg ->
                                     try {
-                                        setAppFrozen(pkg, frozen, mode, lookup, trace)
+                                        setAppFrozen(pkg, frozen, mode, trace)
                                     } catch (e: CancellationException) {
                                         throw e
                                     } catch (e: Exception) {
-                                        trace?.error("android_error", pkg, e)
-                                        HLog.e(e)
-                                        val cause = (e as? InvocationTargetException)?.targetException ?: e
-                                        androidError = cause.message?.lineSequence()?.firstOrNull()?.take(350)
+                                        recordFailure(pkg, e)
                                         false
                                     }
                                 }
                             }
                             if (trace != null) for (pkg in batch) {
-                                if (!mode.endsWith(HailData.DISABLE) || pkg !in succeeded) {
+                                if ((!mode.endsWith(HailData.DISABLE) || pkg !in succeeded) &&
+                                        (mode != HailData.MODE_SHIZUKU_DISABLE || lookup.shizuku == null)) {
                                     observeAfterChange(trace, pkg, mode, lookup, pkg in succeeded)
                                 }
                             }
@@ -150,13 +168,14 @@ object AppManager {
                     val label = single?.let { pkg -> runCatching { infoByPackage[pkg]?.loadLabel(app.packageManager)?.toString() }.getOrNull() }
                     val failed = result.failed.singleOrNull()
                     val failureMessage = if (failed != null && mode.endsWith(HailData.DISABLE) &&
-                        result.changed.isEmpty() && result.unchanged.isEmpty() && result.missing.isEmpty()) {
+                        result.changed.isEmpty() && result.unchanged.isEmpty() && result.missing.isEmpty() && result.notInstalled.isEmpty()) {
                         val info = infoByPackage[failed] ?: HPackages.getApplicationInfoOrNull(failed)
+                        val androidError = failureReasons[failed]
                         listOfNotNull(disableFailureMessage(failed, mode, info, androidError), androidError).joinToString("\n").ifBlank { null }
                     } else null
                     trace?.event("batch_result", null, "changed" to result.changed.size, "unchanged" to result.unchanged.size,
-                        "missing" to result.missing.size, "failed" to result.failed.size)
-                    result.copy(singleLabel = label, failureMessage = failureMessage)
+                        "missing" to result.missing.size, "notInstalled" to result.notInstalled.size, "failed" to result.failed.size)
+                    result.copy(singleLabel = label, failureMessage = failureMessage, failureReasons = failureReasons)
                 }
             }
         } catch (e: CancellationException) {
@@ -197,6 +216,10 @@ object AppManager {
 
     fun resultMessage(result: FreezeResult, frozen: Boolean): String {
         result.failureMessage?.let { return it }
+        if (result.notInstalled.isNotEmpty()) {
+            return app.getString(if (frozen) R.string.freeze_counts_inactive else R.string.unfreeze_counts_not_installed,
+                result.changed.size, result.unchanged.size, result.notInstalled.size, result.missing.size, result.failed.size)
+        }
         if (result.failed.isNotEmpty() || result.missing.isNotEmpty()) {
             if (result.failed.size == 1 && result.missing.isEmpty() && result.changed.isEmpty() && result.unchanged.isEmpty()) {
                 return app.getString(if (!frozen && HailData.workingMode.endsWith(HailData.STOP))
@@ -222,7 +245,7 @@ object AppManager {
         } else {
             trace?.event("launch_policy", pkg, "reason" to "Unfreeze before looking for a launcher activity")
             val result = changeFrozen(listOf(pkg), false, includeLabel = false, mode = mode, trace = trace)
-            if (pkg in result.missing) return null
+            if (pkg in result.missing || pkg in result.notInstalled) return null
             if (pkg in result.failed) throw IllegalStateException(resultMessage(result, false))
             thawed = pkg in result.changed
         }
@@ -242,7 +265,7 @@ object AppManager {
         }
     }
 
-    private fun setAppFrozen(packageName: String, frozen: Boolean, mode: String, lookup: PackageLookup, trace: DecisionTrace?): Boolean {
+    private fun setAppFrozen(packageName: String, frozen: Boolean, mode: String, trace: DecisionTrace?): Boolean {
         if (trace != null && !mode.endsWith(HailData.DISABLE)) {
             trace.event("backend_request", packageName, "backend" to mode, "freeze" to frozen)
             if (mode.startsWith(HailData.SHIZUKU)) HShizuku.isAuthorized(trace)
@@ -259,11 +282,6 @@ object AppManager {
             HailData.MODE_SU_HIDE -> HShell.setAppHidden(packageName, frozen, trace)
             HailData.MODE_SU_SUSPEND -> HShell.setAppSuspended(packageName, frozen, trace)
             HailData.MODE_SHIZUKU_STOP -> HShizuku.forceStopApp(packageName, trace)
-            HailData.MODE_SHIZUKU_DISABLE -> {
-                val service = lookup.shizuku
-                if (service == null) trace?.skipped(packageName, "Authorized Shizuku package service unavailable")
-                service?.setDisabled(packageName, frozen, trace) == true
-            }
             HailData.MODE_SHIZUKU_HIDE -> HShizuku.setAppHidden(packageName, frozen, trace)
             HailData.MODE_SHIZUKU_SUSPEND -> HShizuku.setAppSuspended(packageName, frozen, trace)
             HailData.MODE_ISLAND_HIDE -> HIsland.setAppHidden(packageName, frozen, trace)

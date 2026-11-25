@@ -359,8 +359,8 @@ class SettingsFragment : MainFragment(), MenuProvider {
                     BackupViewModel.State.Saved -> Text(stringResource(R.string.backup_saved))
                     is BackupViewModel.State.Restored -> Column {
                         Text(stringResource(R.string.backup_restored))
-                        if (current.changed != null) Text(stringResource(R.string.freeze_partial,
-                            current.changed, current.unchanged, current.unavailable, current.failed))
+                        if (current.changed != null) Text(stringResource(R.string.unfreeze_counts_not_installed,
+                            current.changed, current.unchanged, current.notInstalled, current.unavailable, current.failed))
                     }
                     else -> Text(stringResource(R.string.backup_failed))
                 }
