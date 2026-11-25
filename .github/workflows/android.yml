@@ -45,6 +45,9 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: ./gradlew :app:connectedDebugAndroidTest
+      - name: Verify optimized release build
+        if: ${{ !cancelled() }}
+        run: ./gradlew :app:assembleRelease
       - name: Upload launcher test report
         if: failure()
         uses: actions/upload-artifact@v7.0.2
