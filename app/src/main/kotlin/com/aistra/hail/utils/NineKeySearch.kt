@@ -38,7 +38,10 @@ object NineKeySearch {
         }
     }
 
-    private fun toNineKey(raw: String): String = buildString {
-        for (ch in toPinyin(raw)) append(pinyinToNineKey(ch))
+    internal fun toNineKey(raw: String): String = buildString {
+        for (ch in toPinyin(raw)) {
+            val digit = pinyinToNineKey(ch)
+            if (digit in '0'..'9') append(digit)
+        }
     }
 }

@@ -45,6 +45,11 @@ class PrivacyAndSearchTest {
         assertTrue(PinyinSearch.matchesPronunciation(label, "nghangchong"))
     }
 
+    @Test fun nineKeyKeepsToneDigitsAndOmitsTheUmlautSeparator() {
+        assertEquals("683783", NineKeySearch.toNineKey("女"))
+        assertEquals("22522", NineKeySearch.toNineKey("CAL-22"))
+    }
+
     @Test fun subsequenceRequiresOrderAndMultiplicity() {
         assertTrue(FuzzySearch.containsInOrder("PACKAGE MANAGER", "PKGMGR"))
         assertFalse(FuzzySearch.containsInOrder("PACKAGE", "GG"))
