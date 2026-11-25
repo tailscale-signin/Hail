@@ -9,6 +9,9 @@ fi
 sdk_tools="$ANDROID_HOME/build-tools/36.0.0"
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
+report=app/build/outputs/androidTest-results/connected/fixtures
+mkdir -p "$report"
+exec > >(tee "$report/setup.log") 2>&1
 apk_dir=app/build/outputs/apk/debug
 adb install -r "$apk_dir/$(jq -r '.elements[0].outputFile' "$apk_dir/output-metadata.json")"
 adb shell 'run-as com.aistra.hail.debug mkdir -p files/v1'
@@ -37,4 +40,11 @@ XML
     "$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture "$fixture_dir/$name.apk"
     adb install -r "$fixture_dir/$name.apk"
 done
-./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.hailCiFixtures=true
+./gradlew :app:assembleDebugAndroidTest
+test_dir=app/build/outputs/apk/androidTest/debug
+adb install -r -t "$test_dir/$(jq -r '.elements[0].outputFile' "$test_dir/output-metadata.json")"
+classes=com.aistra.hail.app.DeviceFreezeTest,com.aistra.hail.ui.settings.BackupSettingsTest,com.aistra.hail.ui.settings.BulkShortcutLauncherTest
+timeout 7m adb shell am instrument -w -r -e class "$classes" -e hailCiFixtures true \
+    com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "$report/runner.txt"
+adb logcat -d -s HailTiming:I > "$report/timings.txt"
+python3 .github/scripts/check-device-results.py "$report/runner.txt"

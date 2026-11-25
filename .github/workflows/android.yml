@@ -12,6 +12,7 @@ on:
       - '.github/**'
       - '!.github/workflows/android.yml'
       - '!.github/scripts/test-device-actions.sh'
+      - '!.github/scripts/check-device-results.py'
 
 permissions:
   contents: read
