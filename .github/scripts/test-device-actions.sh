@@ -63,7 +63,7 @@ adb install "$shizuku_apk"
 shizuku_dir="$(adb shell pm path moe.shizuku.privileged.api | tr -d '\r' | sed -n 's|^package:\(.*\)/base.apk$|\1|p')"
 test -n "$shizuku_dir"
 adb shell "$shizuku_dir/lib/x86_64/libshizuku.so"
-classes=com.aistra.hail.app.DeviceFreezeTest,com.aistra.hail.ui.settings.BackupSettingsTest,com.aistra.hail.ui.settings.BulkShortcutLauncherTest,com.aistra.hail.ui.apps.SystemAppsTest
+classes=com.aistra.hail.app.DeviceFreezeTest,com.aistra.hail.ui.settings.BackupSettingsTest,com.aistra.hail.ui.settings.BulkShortcutLauncherTest,com.aistra.hail.ui.apps.SystemAppsTest,com.aistra.hail.ui.settings.DebugLogTest
 timeout 7m adb shell am instrument -w -r -e class "$classes" -e hailCiFixtures true \
     com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "$report/runner.txt"
 adb logcat -d -s HailTiming:I > "$report/timings.txt"
@@ -117,12 +117,20 @@ for server in shell root; do
             adb install "$fixture_dir/$distribution.apk"
         fi
         output="$report/parity-$distribution-$server.txt"
-        timeout 3m adb shell am instrument -w -r -e class com.aistra.hail.ui.apps.ReleaseSystemAppsTest \
+        timeout 4m adb shell am instrument -w -r -e class com.aistra.hail.ui.apps.ReleaseSystemAppsTest \
             -e hailReleaseParity true -e server "$server" -e distribution "$distribution" \
             com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output"
         adb logcat -d -s Hail:E HailParity:I | tail -n 90 > "$report/backend-$distribution-$server.log"
         grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
         grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"
+        if [[ $distribution == fork ]]; then
+            for _ in {1..15}; do
+                path=$(adb shell "find /storage/emulated/0 -type f -name 'Hail-trace-$server.jsonl*' 2>/dev/null" | tr -d '\r' | head -n 1) || true
+                if [[ -n $path ]] && adb pull "$path" "$report/decision-$server.jsonl" >/dev/null && [[ -s $report/decision-$server.jsonl ]]; then break; fi
+                sleep 1
+            done
+            python3 .github/scripts/check-decision-log.py "$report/decision-$server.jsonl" "$server"
+        fi
         grep 'HailParity.*Android verified' "$report/backend-$distribution-$server.log" | tail -n 1 >> "$report/parity.log"
     done
 done

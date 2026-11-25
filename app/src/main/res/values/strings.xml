@@ -212,4 +212,10 @@
     <string name="already_unfrozen">%1$s already unfrozen</string>
     <string name="freeze_partial">%1$d changed · %2$d already in that state · %3$d unavailable · %4$d failed</string>
     <string name="stop_unfreeze">Launch the app to clear Android’s force-stop state.</string>
+    <string name="debug_mode">Debug mode</string>
+    <string name="debug_logging">Debug logging</string>
+    <string name="debug_logging_summary">Record Hail’s package decisions and Android responses on this device. The most recent 4 MiB are kept.</string>
+    <string name="debug_export">Export debug log</string>
+    <string name="debug_export_saved">Debug log saved</string>
+    <string name="debug_export_failed">Couldn’t save the debug log</string>
 </resources>

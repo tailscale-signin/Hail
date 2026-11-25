@@ -139,10 +139,10 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             }
         }
         activity.fab.setOnClickListener {
-            setListFrozen(true, currentApps().filterNot { it.whitelisted })
+            setListFrozen(true, currentApps(), skipWhitelisted = true, source = "home_freeze_button")
         }
         activity.fab.setOnLongClickListener {
-            setListFrozen(true)
+            setListFrozen(true, source = "home_freeze_button_long_press")
             true
         }
     }
@@ -211,6 +211,8 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             return
         }
         if (pagerAdapter.currentList.find { it.info == info }?.state == AppInfo.State.NOT_FOUND) {
+            DecisionLog.begin("home", "inspect_unavailable", pkg = info.packageName)?.event("status_opened", info.packageName,
+                "reason" to "Home row has no current-user installation evidence")
             showPackageStatus(info.packageName)
             return
         }
@@ -220,6 +222,8 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
     override fun onItemLongClick(info: AppInfo): Boolean {
         val row = pagerAdapter.currentList.firstOrNull { it.info == info } ?: return false
         if (row.state == AppInfo.State.NOT_FOUND && (!multiselect || info !in selectedList)) {
+            DecisionLog.begin("home", "inspect_unavailable", pkg = info.packageName)?.event("status_opened", info.packageName,
+                "reason" to "Home row has no current-user installation evidence")
             showPackageStatus(info.packageName)
             return true
         }
@@ -464,48 +468,65 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
     }
 
     private fun launchApp(packageName: String) {
+        val mode = HailData.workingMode
+        val trace = DecisionLog.begin("home", "launch", mode, packageName)
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val target = AppManager.prepareLaunch(packageName)
-                if (!isResumed) return@launch
+                val target = AppManager.prepareLaunch(packageName, mode, trace)
+                if (!isResumed) {
+                    trace?.skipped(packageName, "Home is no longer in the foreground")
+                    return@launch
+                }
                 if (target == null) HUI.showToast(R.string.activity_not_found)
                 else {
                     startActivity(target)
+                    trace?.event("activity_started", packageName)
                     app.recordLaunch(packageName)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: RuntimeException) {
+                trace?.error("launch_failed", packageName, e)
                 HUI.showToast(e.localizedMessage ?: getString(R.string.activity_not_found))
             }
         }
     }
 
     private fun setListFrozen(
-        frozen: Boolean, list: List<AppInfo> = HailData.checkedList, removeAfter: Boolean = false
+        frozen: Boolean, list: List<AppInfo> = HailData.checkedList, removeAfter: Boolean = false,
+        skipWhitelisted: Boolean = false, source: String = "home_selection"
     ) {
-        if (HailData.workingMode == HailData.MODE_DEFAULT) {
-            val only = list.singleOrNull()
-            if (only != null) showPackageStatus(only.packageName)
+        val mode = HailData.workingMode
+        val trace = DecisionLog.change(source, frozen, mode, list.singleOrNull()?.packageName)
+        val packages = list.mapNotNull {
+            if (skipWhitelisted && it.whitelisted) {
+                trace?.skipped(it.packageName, "Whitelisted for this action")
+                null
+            } else it.packageName
+        }
+        if (mode == HailData.MODE_DEFAULT) {
+            trace?.skipped(packages.singleOrNull(), "Idle mode requires package controls or Android Settings")
+            val only = packages.singleOrNull()
+            if (only != null) showPackageStatus(only)
             else MaterialAlertDialogBuilder(activity).setMessage(R.string.msg_guide)
                 .setPositiveButton(android.R.string.ok, null).show()
             return
         }
-        val packages = list.map { it.packageName }
         val origin = binding
         val host = activity
         operations++
         origin.refresh.isRefreshing = true
         host.lifecycleScope.launch {
             try {
-                if (HailData.workingMode == HailData.MODE_SHIZUKU_HIDE && withContext(Dispatchers.IO) {
+                if (mode == HailData.MODE_SHIZUKU_HIDE && withContext(Dispatchers.IO) {
                     runCatching { !HShizuku.isRoot }.getOrDefault(false)
                 }) {
+                    trace?.skipped(null, "ADB-backed Shizuku cannot hide packages")
                     if (isResumed) MaterialAlertDialogBuilder(host).setMessage(R.string.shizuku_hide_adb)
                         .setPositiveButton(android.R.string.ok, null).show()
                     return@launch
                 }
-                val result = AppManager.changeFrozen(packages, frozen)
+                val result = AppManager.changeFrozen(packages, frozen, mode = mode, trace = trace)
                 if (removeAfter) {
                     val removable = packages.filter(result::reachedTarget)
                     if (removable.isNotEmpty()) {
@@ -655,12 +676,12 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                 } else deselect()
             }
 
-            R.id.action_freeze_current -> setListFrozen(true, currentApps().filterNot { it.whitelisted })
+            R.id.action_freeze_current -> setListFrozen(true, currentApps(), skipWhitelisted = true, source = "home_current")
 
-            R.id.action_unfreeze_current -> setListFrozen(false, currentApps())
-            R.id.action_freeze_all -> setListFrozen(true)
-            R.id.action_unfreeze_all -> setListFrozen(false)
-            R.id.action_freeze_non_whitelisted -> setListFrozen(true, HailData.checkedList.filterNot { it.whitelisted })
+            R.id.action_unfreeze_current -> setListFrozen(false, currentApps(), source = "home_current")
+            R.id.action_freeze_all -> setListFrozen(true, source = "home_all")
+            R.id.action_unfreeze_all -> setListFrozen(false, source = "home_all")
+            R.id.action_freeze_non_whitelisted -> setListFrozen(true, skipWhitelisted = true, source = "home_non_whitelisted")
 
             R.id.action_import_clipboard -> importFromClipboard()
             R.id.action_import_frozen -> lifecycleScope.launch {

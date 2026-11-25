@@ -17,6 +17,7 @@ import com.aistra.hail.R
 import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.HailData
 import com.aistra.hail.databinding.DialogPackageStatusBinding
+import com.aistra.hail.utils.DecisionLog
 import com.aistra.hail.utils.HPackages
 import com.aistra.hail.utils.HUI
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -82,19 +83,22 @@ class PackageStatusDialog : DialogFragment() {
 
     private suspend fun render() {
         val mode = HailData.workingMode
+        val trace = DecisionLog.begin("home_status", "inspect", mode, pkg)
         val shizukuUid = if (mode.endsWith(HailData.DISABLE) && mode != HailData.MODE_SHIZUKU_DISABLE) null else
-            withContext(Dispatchers.IO) { if (HShizuku.isAuthorized()) runCatching { Shizuku.getUid() }.getOrNull() else null }
+            withContext(Dispatchers.IO) { if (HShizuku.isAuthorized(trace)) runCatching { Shizuku.getUid() }.getOrNull() else null }
         val method = when {
             mode.endsWith(HailData.DISABLE) -> mode
             shizukuUid != null -> HailData.MODE_SHIZUKU_DISABLE
             else -> null
         }
-        val lookup = PackageLookup(method ?: mode)
+        val lookup = PackageLookup(method ?: mode, trace)
         val record = withContext(Dispatchers.IO) { lookup.find(pkg) }
         val setting = withContext(Dispatchers.IO) { record?.setting() }
         val enabled = record?.takeIf { it.installed }?.canDisable(setting)
         val upgrade = enabled == false && setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER &&
             withContext(Dispatchers.IO) { lookup.disableSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED }
+        trace?.event("status_controls", pkg, "workingMode" to mode, "effectiveMode" to method, "serviceUid" to shizukuUid,
+            "installed" to record?.installed, "enabled" to enabled, "observedSetting" to setting, "offerFullDisable" to upgrade)
         val alert = dialog as? AlertDialog ?: return
         val modeName = resources.getStringArray(R.array.working_mode_entries).getOrNull(HailData.WORKING_MODE_VALUES.indexOf(mode)) ?: mode
         val label = record?.info?.loadLabel(requireContext().packageManager)?.toString() ?: pkg
@@ -136,7 +140,7 @@ class PackageStatusDialog : DialogFragment() {
         binding.packageAction.isEnabled = false
         binding.enableInstead.isEnabled = false
         work = lifecycleScope.launch {
-            val result = AppManager.changeFrozen(listOf(pkg), disable, mode = mode)
+            val result = AppManager.changeFrozen(listOf(pkg), disable, mode = mode, source = "home_status")
             message = if (result.reachedTarget(pkg)) null else AppManager.resultMessage(result, disable)
             render()
         }

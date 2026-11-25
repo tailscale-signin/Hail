@@ -7,6 +7,7 @@ import com.aistra.hail.HailApp.Companion.app
 import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.HailData
 import com.aistra.hail.services.AutoFreezeService
+import com.aistra.hail.utils.DecisionLog
 import com.aistra.hail.utils.HSystem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -15,17 +16,35 @@ class AutoFreezeWorker(context: Context, params: WorkerParameters) : CoroutineWo
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val context = applicationContext
         val screenOff = inputData.getBoolean(HailData.ACTION_LOCK, true)
-        if ((screenOff && (!HailData.autoFreezeAfterLock || HSystem.isInteractive(context))) ||
-            (HailData.skipWhileCharging && HSystem.isCharging(context))) return@withContext Result.success()
-        val foreground = if (HailData.skipForegroundApp) HSystem.foregroundPackage(context)
-            ?: return@withContext Result.success() else null
-        val notifying = if (HailData.skipNotifyingApp) AutoFreezeService.notifyingPackages()
-            ?: return@withContext Result.success() else emptySet()
-        val packages = withContext(Dispatchers.Main.immediate) {
-            HailData.checkedList.filterNot { it.whitelisted || it.packageName == foreground || it.packageName in notifying }
-                .map { it.packageName }
+        val mode = HailData.workingMode
+        val trace = DecisionLog.change("auto_freeze", true, mode)
+        trace?.event("worker_started", null, "workId" to id.toString(), "screenOffTrigger" to screenOff)
+        fun skip(reason: String): Result {
+            trace?.skipped(null, reason)
+            return Result.success()
         }
-        val result = AppManager.changeFrozen(packages, true, includeLabel = false)
+        if (screenOff && !HailData.autoFreezeAfterLock) return@withContext skip("Auto-freeze after lock is off")
+        if (screenOff && HSystem.isInteractive(context)) return@withContext skip("Screen is interactive")
+        if (HailData.skipWhileCharging && HSystem.isCharging(context)) return@withContext skip("Skip while charging is enabled")
+        val foreground = if (HailData.skipForegroundApp) HSystem.foregroundPackage(context)
+            ?: return@withContext skip("Foreground package could not be determined") else null
+        val notifying = if (HailData.skipNotifyingApp) AutoFreezeService.notifyingPackages()
+            ?: return@withContext skip("Notification access unavailable") else emptySet()
+        val packages = withContext(Dispatchers.Main.immediate) {
+            HailData.checkedList.mapNotNull {
+                val reason = when {
+                    it.whitelisted -> "Whitelisted"
+                    it.packageName == foreground -> "Foreground package"
+                    it.packageName in notifying -> "Active notification"
+                    else -> null
+                }
+                if (reason == null) it.packageName else {
+                    trace?.skipped(it.packageName, reason)
+                    null
+                }
+            }
+        }
+        val result = AppManager.changeFrozen(packages, true, includeLabel = false, mode = mode, trace = trace)
         app.setAutoFreezeService()
         if (result.failed.isEmpty()) Result.success() else Result.failure()
     }

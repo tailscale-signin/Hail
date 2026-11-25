@@ -32,7 +32,6 @@ import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import com.aistra.hail.HailApp.Companion.app
 import com.aistra.hail.R
-import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.HailApi
 import com.aistra.hail.app.HailData
@@ -54,9 +53,22 @@ class ApiActivity : ComponentActivity() {
         dispatch(intent)
     }
 
+    private val requestSource: String get() = when (intent.getStringExtra(HailApi.EXTRA_ORIGIN)) {
+        HailApi.SHORTCUT -> HailApi.SHORTCUT
+        HailApi.TILE -> HailApi.TILE
+        HailApi.NOTIFICATION -> HailApi.NOTIFICATION
+        else -> if (intent.action == Intent.ACTION_VIEW) "hail_link" else "api"
+    }
+
     private fun dispatch(request: Intent) = enqueue {
         setIntent(request)
-        handleAction(request.action)
+        try {
+            handleAction(request.action)
+        } catch (e: Exception) {
+            if (e !is CancellationException) DecisionLog.begin(requestSource, "dispatch")?.event("dispatch_failed", null,
+                "errorType" to e.javaClass.name)
+            throw e
+        }
     }
 
     private fun enqueue(action: suspend () -> Boolean) {
@@ -92,13 +104,13 @@ class ApiActivity : ComponentActivity() {
             HailApi.ACTION_FREEZE_TAG, HailApi.ACTION_UNFREEZE_TAG -> {
                 val id = requireTagId
                 val freeze = action == HailApi.ACTION_FREEZE_TAG
-                setListFrozen(freeze, HailData.checkedList.filter { id in it.tagIdList }, skipWhitelisted = freeze)
+                setListFrozen(freeze, tagId = id, skipWhitelisted = freeze)
             }
 
             HailApi.ACTION_FREEZE_ALL -> setListFrozen(true)
             HailApi.ACTION_UNFREEZE_ALL -> setListFrozen(false)
             HailApi.ACTION_FREEZE_NON_WHITELISTED -> setListFrozen(true, skipWhitelisted = true)
-            HailApi.ACTION_FREEZE_AUTO -> setAutoFreeze(false)
+            HailApi.ACTION_FREEZE_AUTO -> setAutoFreeze(false, requestSource)
             HailApi.ACTION_LOCK -> lockScreen(false)
             HailApi.ACTION_LOCK_FREEZE -> lockScreen(true)
             else -> throw IllegalArgumentException("Unknown action:\n$action")
@@ -218,26 +230,52 @@ class ApiActivity : ComponentActivity() {
         } ?: throw IllegalArgumentException("Tag must not be null")
 
     private suspend fun launchApp(pkg: String, tagId: Int? = null) {
-        if (tagId != null) setListFrozen(false, HailData.checkedList.filter { tagId in it.tagIdList })
-        val target = AppManager.prepareLaunch(pkg) ?: throw ActivityNotFoundException(getString(R.string.activity_not_found))
-        startActivity(target)
+        val mode = HailData.workingMode
+        val trace = DecisionLog.begin(requestSource, "launch", mode, pkg)
+        if (tagId != null) setListFrozen(false, tagId = tagId, trace = trace)
+        val target = AppManager.prepareLaunch(pkg, mode, trace) ?: throw ActivityNotFoundException(getString(R.string.activity_not_found))
+        try {
+            startActivity(target)
+            trace?.event("activity_started", pkg)
+        } catch (e: RuntimeException) {
+            trace?.error("launch_failed", pkg, e)
+            throw e
+        }
         app.recordLaunch(pkg)
     }
 
     private suspend fun setAppFrozen(pkg: String, frozen: Boolean) {
-        if (pkg == packageName) throw SecurityException(getString(R.string.permission_denied))
-        if (frozen && !HailData.isChecked(pkg)) throw SecurityException("Package not checked")
-        val result = AppManager.changeFrozen(listOf(pkg), frozen)
+        val trace = DecisionLog.change(requestSource, frozen, pkg = pkg)
+        if (pkg == packageName) {
+            trace?.skipped(pkg, "API cannot change Hail itself")
+            throw SecurityException(getString(R.string.permission_denied))
+        }
+        if (frozen && !HailData.isChecked(pkg)) {
+            trace?.skipped(pkg, "API freeze requires a package in the Hail list")
+            throw SecurityException("Package not checked")
+        }
+        val result = AppManager.changeFrozen(listOf(pkg), frozen, trace = trace)
         if (pkg in result.missing) throw NameNotFoundException(getString(R.string.app_not_installed))
         if (!result.reachedTarget(pkg)) throw IllegalStateException(AppManager.resultMessage(result, frozen))
         HUI.showToast(AppManager.resultMessage(result, frozen))
     }
 
     private suspend fun setListFrozen(
-        frozen: Boolean, list: List<AppInfo> = HailData.checkedList, skipWhitelisted: Boolean = false
+        frozen: Boolean, tagId: Int? = null, skipWhitelisted: Boolean = false,
+        trace: DecisionTrace? = DecisionLog.change(requestSource, frozen)
     ) {
-        val packages = list.filterNot { skipWhitelisted && it.whitelisted }.map { it.packageName }
-        val result = AppManager.changeFrozen(packages, frozen)
+        val packages = HailData.checkedList.mapNotNull {
+            val reason = when {
+                tagId != null && tagId !in it.tagIdList -> "Outside the requested tag"
+                skipWhitelisted && it.whitelisted -> "Whitelisted for this action"
+                else -> null
+            }
+            if (reason == null) it.packageName else {
+                trace?.skipped(it.packageName, reason)
+                null
+            }
+        }
+        val result = AppManager.changeFrozen(packages, frozen, trace = trace)
         val message = AppManager.resultMessage(result, frozen)
         if (result.failed.isNotEmpty() && result.changed.isEmpty()) throw IllegalStateException(message)
         HUI.showToast(message)

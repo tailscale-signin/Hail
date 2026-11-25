@@ -48,7 +48,7 @@ object HShortcuts {
 
     private fun buildPinShortcut(icon: IconCompat, id: String, label: CharSequence, intent: Intent) =
         ShortcutInfoCompat.Builder(app, id).setIcon(icon).setShortLabel(label)
-            .setIntent(Intent(intent).setClass(app, ApiActivity::class.java)).build()
+            .setIntent(Intent(intent).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT).setClass(app, ApiActivity::class.java)).build()
 
     val supportsPinning get() = ShortcutManagerCompat.isRequestPinShortcutSupported(app)
 
@@ -77,7 +77,7 @@ object HShortcuts {
                     app.packageManager.defaultActivityIcon
                 ))).setShortLabel(
                     applicationInfo?.loadLabel(app.packageManager) ?: packageName
-                ).setIntent(HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, packageName).setClass(app, ApiActivity::class.java)).build()
+                ).setIntent(HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, packageName).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT).setClass(app, ApiActivity::class.java)).build()
         ShortcutManagerCompat.pushDynamicShortcut(app, shortcut)
         addDynamicShortcutAction(HailData.dynamicShortcutAction)
     }
@@ -109,7 +109,7 @@ object HShortcuts {
                     app, icon
                 )!!
             )
-        ).setShortLabel(app.getString(label)).setIntent(Intent(id).setClass(app, ApiActivity::class.java)).build()
+        ).setShortLabel(app.getString(label)).setIntent(Intent(id).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT).setClass(app, ApiActivity::class.java)).build()
         ShortcutManagerCompat.pushDynamicShortcut(app, shortcut)
     }
 

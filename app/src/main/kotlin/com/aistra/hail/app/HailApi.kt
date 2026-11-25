@@ -4,6 +4,11 @@ import android.content.Intent
 import com.aistra.hail.BuildConfig
 
 object HailApi {
+    const val EXTRA_ORIGIN = "com.aistra.hail.action_origin"
+    const val SHORTCUT = "launcher_shortcut"
+    const val TILE = "quick_settings_tile"
+    const val NOTIFICATION = "notification"
+
     /** @since 0.5.0 */
     const val ACTION_LAUNCH = "${BuildConfig.APPLICATION_ID}.action.LAUNCH"
 

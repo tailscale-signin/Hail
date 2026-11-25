@@ -33,20 +33,22 @@ object HDhizuku {
             true
         }.getOrDefault(false)
 
-    fun setAppHidden(packageName: String, hidden: Boolean): Boolean = runCatching {
+    fun setAppHidden(packageName: String, hidden: Boolean, trace: DecisionTrace? = null): Boolean = runCatching {
         HTarget.O && dpm::class.java.getMethod(
             "setApplicationHidden",
             ComponentName::class.java,
             String::class.java,
             Boolean::class.java
         ).invoke(dpm, null, packageName, hidden) as Boolean
-    }.getOrDefault(false)
+    }.onFailure { trace?.error("android_error", packageName, it) }.getOrDefault(false)
 
-    fun setSuspended(packages: List<String>, suspended: Boolean): Set<String> = try {
+    fun setSuspended(packages: List<String>, suspended: Boolean, trace: DecisionTrace? = null): Set<String> = try {
+        trace?.event("policy_check", null, "packageAccessSupported" to HTarget.O)
         if (HTarget.O) {
             packages.toSet() - dpm.setPackagesSuspended(null, packages.toTypedArray(), suspended).toSet()
         } else emptySet()
     } catch (e: RuntimeException) {
+        trace?.error("android_error", null, e)
         HLog.e(e)
         emptySet()
     }

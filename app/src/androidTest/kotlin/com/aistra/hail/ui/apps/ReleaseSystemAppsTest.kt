@@ -11,6 +11,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiScrollable
+import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import com.aistra.hail.R
 import org.junit.Assert.*
@@ -79,6 +81,23 @@ class ReleaseSystemAppsTest {
         device.findObject(By.desc(context.getString(androidx.appcompat.R.string.abc_toolbar_collapse_description)))?.click()
     }
 
+    private fun settingsItem(id: Int) {
+        val label = context.getString(id)
+        if (device.findObject(By.text(label)) == null)
+            UiScrollable(UiSelector().scrollable(true)).scrollIntoView(UiSelector().text(label))
+        await(By.text(label)).click()
+    }
+
+    private fun exportLog(server: String) {
+        await(res("nav_settings")).click()
+        settingsItem(R.string.debug_logging) // Stop first; the captured failure must remain exportable.
+        settingsItem(R.string.debug_export)
+        val documents = Pattern.compile(".*documentsui")
+        await(By.pkg(documents).clazz("android.widget.EditText")).text = "Hail-trace-$server.jsonl"
+        await(By.pkg(documents).text(Pattern.compile("save", Pattern.CASE_INSENSITIVE))).click()
+        await(res("nav_settings"))
+    }
+
     private fun openStatus(label: String) {
         await(res("app_name").text(label)).longClick()
         await(text(R.string.package_status_controls)).click()
@@ -113,6 +132,10 @@ class ReleaseSystemAppsTest {
             else packages.forEach { setFixture(it, enabled) }
             context.startActivity(requireNotNull(pm.getLaunchIntentForPackage(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             if (!upgrade) configure(packages)
+            if (fork) {
+                await(res("nav_settings")).click()
+                settingsItem(R.string.debug_logging)
+            }
             await(res("nav_home")).click()
             await(res("app_name").text(pm.getApplicationInfo(packages.first(), 0).loadLabel(pm).toString()))
             if (upgrade) {
@@ -140,6 +163,7 @@ class ReleaseSystemAppsTest {
                     expectSetting(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
                 }
                 device.pressBack()
+                exportLog(if (root) "root" else "shell")
             }
             if (legacy) {
                 menu(R.string.action_freeze_all, "action_freeze_all")

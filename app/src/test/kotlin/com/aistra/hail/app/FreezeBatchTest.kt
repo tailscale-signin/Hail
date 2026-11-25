@@ -11,7 +11,7 @@ class FreezeBatchTest {
         val result = FreezeBatch.run(packages + packages + "hail", "hail", true, {
             reads.add(it)
             AppInfo.State.UNFROZEN
-        }, { sizes.add(it.size); it.toSet() })
+        }) { sizes.add(it.size); it.toSet() }
         assertEquals(packages, reads)
         assertEquals(listOf(64, 64, 2), sizes)
         assertEquals(packages.toSet(), result.changed)
