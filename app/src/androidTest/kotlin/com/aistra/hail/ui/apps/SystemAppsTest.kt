@@ -8,6 +8,7 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import android.widget.EditText
 import androidx.preference.PreferenceManager
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -70,6 +71,14 @@ class SystemAppsTest {
         }
     }
 
+    private fun searchForApp(scenario: ActivityScenario<MainActivity>, pkg: String): BySelector {
+        openToolbarItem("action_search", R.string.action_search)
+        scenario.onActivity { activity ->
+            activity.findViewById<EditText>(androidx.appcompat.R.id.search_src_text).setText(pkg)
+        }
+        return By.res(ctx.packageName, "app_desc").text(pkg)
+    }
+
     private fun withAppFilters(showSystem: Boolean, run: (ApplicationInfo) -> Unit) {
         val info = fixture()
         val oldMode = prefs.getString(HailData.WORKING_MODE, null)
@@ -96,14 +105,12 @@ class SystemAppsTest {
         withAppFilters(false) { info ->
             val pkg = info.packageName
             val oldSetting = pm.getApplicationEnabledSetting(pkg)
-            ActivityScenario.launch(MainActivity::class.java).use {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 await(By.res(ctx.packageName, "nav_apps")).click()
                 openToolbarItem("action_apps_filter", R.string.filter_by)
                 await(text(R.string.filter_system_apps)).click()
                 await(text(R.string.action_continue)).click()
-                openToolbarItem("action_search", R.string.action_search)
-                await(By.clazz("android.widget.EditText")).text = pkg
-                await(By.res(ctx.packageName, "app_desc").text(pkg)).longClick()
+                await(searchForApp(scenario, pkg)).longClick()
                 await(text(R.string.disable_in_settings)).click()
                 val details = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null))
                 val settingsPkg = requireNotNull(details.resolveActivity(pm)).packageName
@@ -118,7 +125,7 @@ class SystemAppsTest {
         val oldSetting = pm.getApplicationEnabledSetting(pkg)
         val wasChecked = HailData.isChecked(pkg)
         try {
-            ActivityScenario.launch(MainActivity::class.java).use {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 await(By.res(ctx.packageName, "nav_settings")).click()
                 await(text(R.string.working_mode)).click()
                 await(text(R.string.mode_shizuku_disable)).click()
@@ -127,10 +134,16 @@ class SystemAppsTest {
                 }
                 waitFor("Hail saved the authorized Shizuku mode") { HailData.workingMode == HailData.MODE_SHIZUKU_DISABLE }
                 assertEquals(2000, Shizuku.getUid())
+                runBlocking {
+                    for (disable in listOf(true, false)) {
+                        val result = AppManager.changeFrozen(listOf(pkg), disable)
+                        assertEquals(AppManager.resultMessage(result, disable), setOf(pkg), result.changed)
+                        val expected = if (disable) PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                        assertEquals(expected, pm.getApplicationEnabledSetting(pkg))
+                    }
+                }
                 await(By.res(ctx.packageName, "nav_apps")).click()
-                openToolbarItem("action_search", R.string.action_search)
-                await(By.clazz("android.widget.EditText")).text = pkg
-                val row = By.res(ctx.packageName, "app_desc").text(pkg)
+                val row = searchForApp(scenario, pkg)
                 await(row).longClick()
                 await(text(R.string.disable_app)).click()
                 waitFor("Android disabled $pkg for this user") {
