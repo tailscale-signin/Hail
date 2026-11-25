@@ -484,7 +484,9 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         frozen: Boolean, list: List<AppInfo> = HailData.checkedList, removeAfter: Boolean = false
     ) {
         if (HailData.workingMode == HailData.MODE_DEFAULT) {
-            MaterialAlertDialogBuilder(activity).setMessage(R.string.msg_guide)
+            val only = list.singleOrNull()
+            if (only != null) showPackageStatus(only.packageName)
+            else MaterialAlertDialogBuilder(activity).setMessage(R.string.msg_guide)
                 .setPositiveButton(android.R.string.ok, null).show()
             return
         }

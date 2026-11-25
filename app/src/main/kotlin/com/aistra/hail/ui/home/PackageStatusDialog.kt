@@ -118,7 +118,7 @@ class PackageStatusDialog : DialogFragment() {
                 work = lifecycleScope.launch {
                     message = if (enabled != null && method != null) {
                         val result = AppManager.changeFrozen(listOf(pkg), enabled, mode = method)
-                        AppManager.resultMessage(result, enabled)
+                        if (result.reachedTarget(pkg)) null else AppManager.resultMessage(result, enabled)
                     } else null
                     render()
                 }
@@ -127,7 +127,7 @@ class PackageStatusDialog : DialogFragment() {
     }
 
     override fun onDismiss(dialog: DialogInterface) {
-        parentFragmentManager.setFragmentResult(RESULT, if (remove) bundleOf(REMOVE to pkg) else Bundle())
+        if (isAdded) parentFragmentManager.setFragmentResult(RESULT, if (remove) bundleOf(REMOVE to pkg) else Bundle())
         super.onDismiss(dialog)
     }
 
