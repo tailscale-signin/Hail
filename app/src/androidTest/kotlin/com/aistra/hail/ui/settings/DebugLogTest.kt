@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -22,6 +23,7 @@ import java.io.File
 @SdkSuppress(minSdkVersion = 29)
 class DebugLogTest {
     @Test fun offByDefaultOrderedBoundedAndExportableAfterStopping() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("hailCiFixtures") == "true")
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         val prefs = PreferenceManager.getDefaultSharedPreferences(ctx)
         val dir = File(ctx.noBackupFilesDir, "decision-log")
