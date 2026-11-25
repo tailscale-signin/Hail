@@ -637,9 +637,13 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 }
             }
 
-            mode.startsWith(HailData.PRIVAPP) -> if (!HPackages.isPrivilegedApp(app.packageName)) {
-                HUI.showToast(R.string.permission_denied)
-                return false
+            mode.startsWith(HailData.PRIVAPP) -> {
+                val permission = if (mode == HailData.MODE_PRIVAPP_DISABLE) CHANGE_COMPONENT_ENABLED_STATE else "android.permission.FORCE_STOP_PACKAGES"
+                if (ContextCompat.checkSelfPermission(requireContext(), permission) != PackageManager.PERMISSION_GRANTED) {
+                    MaterialAlertDialogBuilder(requireContext()).setMessage(R.string.privileged_mode_permission)
+                        .setPositiveButton(android.R.string.ok, null).show()
+                    return false
+                }
             }
         }
 

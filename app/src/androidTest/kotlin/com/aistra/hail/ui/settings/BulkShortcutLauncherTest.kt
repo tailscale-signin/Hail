@@ -35,20 +35,26 @@ class BulkShortcutLauncherTest {
         "Expected $selector in ${device.currentPackageName}. Visible labels: $labels"
     }
 
-    private fun openBulkPreference(title: BySelector) {
-        await(title)
+    private fun openBulkPreference(expected: BySelector) {
+        val summary = By.text(context.getString(R.string.add_all_app_shortcuts_summary))
+        await(summary)
         device.waitForIdle()
-        val label = context.getString(R.string.add_all_app_shortcuts)
-        var node = instrumentation.uiAutomation.rootInActiveWindow
-            ?.findAccessibilityNodeInfosByText(label)?.firstOrNull { it.text?.contains(label) == true }
-        while (node != null && !node.isClickable) node = node.parent
-        if (node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) != true) await(title).click()
+        await(summary).click()
+        if (device.wait(Until.hasObject(expected), 4_000)) return
+        // The preference is unique to Settings. A launcher window or an open batch dialog must never be tapped again.
+        if (device.hasObject(summary)) {
+            val label = context.getString(R.string.add_all_app_shortcuts_summary)
+            var node = instrumentation.uiAutomation.rootInActiveWindow
+                ?.findAccessibilityNodeInfosByText(label)?.firstOrNull { it.text?.contains(label) == true }
+            while (node != null && !node.isClickable) node = node.parent
+            if (node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) != true) await(summary).click()
+        }
+        await(expected)
     }
 
     @Test fun dismissRetryApproveAndRepeatFromSettings() {
         val packages = listOf("com.android.settings", context.packageName)
         val originals = HailData.checkedList.toList()
-        val title = By.text(context.getString(R.string.add_all_app_shortcuts))
         val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
             .resolveActivity(context.packageManager)!!.packageName
         val approve = By.pkg(launcher).text(Pattern.compile("add( automatically| to home screen)?", Pattern.CASE_INSENSITIVE))
@@ -67,8 +73,7 @@ class BulkShortcutLauncherTest {
                     device.swipe(x, device.displayHeight * 3 / 4, x, device.displayHeight / 3, 30)
                     device.waitForIdle(1_000)
                 }
-                openBulkPreference(title)
-                await(approve)
+                openBulkPreference(approve)
                 device.pressBack()
                 await(By.text(Pattern.compile(context.getString(R.string.shortcut_batch_retry), Pattern.CASE_INSENSITIVE))).click()
                 val manager = requireNotNull(context.getSystemService(ShortcutManager::class.java))
@@ -85,8 +90,7 @@ class BulkShortcutLauncherTest {
                 }
                 await(By.text(context.getString(R.string.shortcut_batch_result, 2, 0, 0)))
                 await(By.text(context.getString(android.R.string.ok))).click()
-                openBulkPreference(title)
-                await(By.text(context.getString(R.string.shortcut_batch_result, 0, 2, 0)))
+                openBulkPreference(By.text(context.getString(R.string.shortcut_batch_result, 0, 2, 0)))
             } finally {
                 scenario.onActivity {
                     HailData.checkedList.clear()

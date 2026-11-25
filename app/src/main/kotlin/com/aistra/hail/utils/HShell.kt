@@ -24,9 +24,11 @@ object HShell {
 
     fun forceStopApp(packageName: String): Boolean = execSU("am force-stop $userArg $packageName").first == 0
 
-    fun setAppDisabled(packageName: String, disabled: Boolean): Boolean =
-        execSU("pm ${if (disabled) "disable-user" else "enable"} --user ${HPackages.myUserId} $packageName").first == 0 &&
-            HPackages.hasRequestedEnabledSetting(packageName, disabled)
+    fun setAppDisabled(packageName: String, disabled: Boolean): Boolean {
+        val (code, output) = execSU("pm ${if (disabled) "disable-user" else "enable"} --user ${HPackages.myUserId} $packageName")
+        if (code != 0) throw IllegalStateException(output?.trim()?.takeIf { it.isNotEmpty() } ?: "pm ($code)")
+        return HPackages.hasRequestedEnabledSetting(packageName, disabled)
+    }
 
     fun setAppHidden(packageName: String, hidden: Boolean): Boolean =
         execSU("pm ${if (hidden) "hide" else "unhide"} $userArg $packageName").first == 0

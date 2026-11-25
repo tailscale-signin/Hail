@@ -13,6 +13,8 @@ expected = {
     ("SystemAppsTest", "idleModeOpensAndroidSettingsForTheSelectedSystemApp"),
     ("SystemAppsTest", "disablesAndEnablesAPreinstalledAppWithShizukuPermission"),
     ("SystemAppsTest", "deniedSystemAppChangePreservesEnabledState"),
+    ("SystemAppsTest", "retainedSystemAppShowsProfileStatusAndCanBeRecheckedFromHome"),
+    ("SystemAppsTest", "installedEvidenceAndRecycledHomeColorsAreIndependentOfRetainedFlags"),
 }
 log = Path(sys.argv[1])
 bundle = {}
