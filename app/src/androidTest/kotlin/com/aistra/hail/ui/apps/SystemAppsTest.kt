@@ -197,6 +197,41 @@ class SystemAppsTest {
         }
     }
 
+    @Suppress("unused", "UNUSED_PARAMETER")
+    class PartialPackageManager(private val throwAfterDelivery: Boolean) {
+        val states = mutableMapOf("applied" to 3, "retry" to 3, "refused" to 3)
+        val singleCalls = mutableListOf<String>()
+        var batchCalls = 0
+
+        fun getApplicationEnabledSetting(pkg: String, userId: Int): Int = states.getValue(pkg)
+
+        fun setComponentEnabledSettings(settings: List<*>, userId: Int, caller: String) {
+            batchCalls++
+            states["applied"] = PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            if (throwAfterDelivery) throw IllegalStateException("Test service disconnected after partial delivery")
+        }
+
+        fun setApplicationEnabledSetting(pkg: String, target: Int, flags: Int, userId: Int, caller: String) {
+            singleCalls.add(pkg)
+            if (pkg == "retry") states[pkg] = target
+        }
+    }
+
+    @Test fun retriesOnlyUnappliedPackagesAfterAcknowledgedOrInterruptedBatch() {
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+        for (interrupted in listOf(false, true)) {
+            val service = PartialPackageManager(interrupted)
+            val failures = mutableListOf<String>()
+            val verified = HShizuku.Packages(service).setDisabled(service.states.keys.toList(), false, emptySet(), null) { pkg, _ ->
+                failures.add(pkg)
+            }
+            assertEquals(1, service.batchCalls)
+            assertEquals(listOf("retry", "refused"), service.singleCalls)
+            assertEquals(setOf("applied", "retry"), verified)
+            assertEquals(listOf("refused"), failures)
+        }
+    }
+
     @Test fun deniedSystemAppChangePreservesEnabledState() = runBlocking {
         val pkg = fixture().packageName
         val oldSetting = pm.getApplicationEnabledSetting(pkg)

@@ -75,8 +75,8 @@ object HShizuku {
         granted
     }.onFailure { trace?.error("permission_check_failed", null, it) }.getOrDefault(false)
 
-    class Packages {
-        private val pm = asInterface("android.content.pm.IPackageManager", "package")
+    class Packages internal constructor(private val pm: Any) {
+        constructor() : this(asInterface("android.content.pm.IPackageManager", "package"))
         private val flagType = if (HTarget.T) Long::class.javaPrimitiveType!! else Int::class.javaPrimitiveType!!
         // Installed for this user, including apps with disabled launcher components.
         private val flags: Any = if (HTarget.T) HPackages.INSTALLED_FOR_USER.toLong() else HPackages.INSTALLED_FOR_USER
@@ -135,16 +135,21 @@ object HShizuku {
             val verified = linkedSetOf<String>()
             for (pkg in packages) {
                 try {
-                    if (!(applied && pkg in attempted)) {
-                        // A remote call can fail after delivery. Reconcile before replaying an uncertain write.
-                        val alreadyApplied = pkg in attempted && runCatching { setting(pkg) }.getOrNull() == target
-                        if (!alreadyApplied) {
-                            trace?.event("android_call", pkg, "method" to "IPackageManager.setApplicationEnabledSetting",
-                                "requestedSetting" to target, "callingPackage" to BuildConfig.APPLICATION_ID, "user" to user)
-                            setSetting.invoke(pm, pkg, target, 0, user, BuildConfig.APPLICATION_ID)
-                        } else trace?.event("write_reconciled", pkg, "observedSetting" to target)
+                    // Verify the group even when Android returned normally. An OEM can ignore a write.
+                    val inGroup = pkg in attempted
+                    val observed = if (inGroup) runCatching { setting(pkg) }
+                        .onFailure { trace?.error("bulk_readback_failed", pkg, it) }.getOrNull() else null
+                    val actual = if (observed == target) {
+                        if (!applied) trace?.event("write_reconciled", pkg, "observedSetting" to observed)
+                        target
+                    } else {
+                        if (applied && inGroup) trace?.event("bulk_readback_retry", pkg,
+                            "observedSetting" to observed, "requestedSetting" to target)
+                        trace?.event("android_call", pkg, "method" to "IPackageManager.setApplicationEnabledSetting",
+                            "requestedSetting" to target, "callingPackage" to BuildConfig.APPLICATION_ID, "user" to user)
+                        setSetting.invoke(pm, pkg, target, 0, user, BuildConfig.APPLICATION_ID)
+                        setting(pkg)
                     }
-                    val actual = setting(pkg)
                     trace?.event("readback", pkg, "reader" to "Shizuku IPackageManager", "observedSetting" to actual,
                         "verified" to (actual == target))
                     if (actual == target) verified.add(pkg)
