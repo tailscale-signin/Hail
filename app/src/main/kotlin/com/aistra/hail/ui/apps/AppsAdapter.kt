@@ -44,6 +44,7 @@ class AppsAdapter : ListAdapter<InstalledRow, AppsAdapter.ViewHolder>(DIFF) {
     }
 
     inner class ViewHolder(private val binding: ItemAppsBinding) : RecyclerView.ViewHolder(binding.root) {
+        private val nameColors = binding.appName.textColors
         var loadIconJob: Job? = null
         lateinit var info: ApplicationInfo
         private val pkg get() = info.packageName
@@ -83,7 +84,7 @@ class AppsAdapter : ListAdapter<InstalledRow, AppsAdapter.ViewHolder>(DIFF) {
                         this, androidx.appcompat.R.attr.colorError
                     )
                 )
-                else setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+                else setTextColor(nameColors)
             }
             binding.appDesc.apply {
                 text = pkg

@@ -18,7 +18,7 @@ data class InstalledRow(val info: ApplicationInfo, val label: String, val frozen
 class AppsViewModel(application: Application) : AndroidViewModel(application) {
     val isRefreshing = MutableLiveData(false)
     val displayApps = MutableLiveData<List<InstalledRow>>()
-    private var applications = emptyList<ApplicationInfo>()
+    private var applications: Collection<HPackages.UserPackage> = emptyList()
     private var query = ""
     private var loadJob: Job? = null
     private var filterJob: Job? = null
@@ -46,7 +46,7 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
         filterJob?.cancel()
         isRefreshing.value = true
         loadJob = viewModelScope.launch {
-            applications = withContext(Dispatchers.IO) { HPackages.getInstalledApplications() }
+            applications = withContext(Dispatchers.IO) { HPackages.packagesForUser().values }
             updateDisplayAppList()
         }
     }
@@ -66,8 +66,9 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
         val nineKey = HailData.nineKeySearch
         filterJob = viewModelScope.launch {
             val filtered = withContext(Dispatchers.IO) {
-                val rows = source.mapNotNull { info ->
+                val rows = source.mapNotNull { record ->
                     ensureActive()
+                    val info = record.info
                     val pkg = info.packageName
                     if (!(if (HPackages.isSystemApp(info)) system else users)) return@mapNotNull null
                     val frozen = AppManager.isAppFrozen(info, mode)
@@ -81,7 +82,7 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
                         HailData.SORT_UPDATE -> HPackages.getUnhiddenPackageInfoOrNull(pkg)?.lastUpdateTime
                         else -> null
                     }
-                    InstalledRow(info, label, frozen, info.flags and ApplicationInfo.FLAG_INSTALLED != 0,
+                    InstalledRow(info, label, frozen, record.installed,
                         false, gray, timestamp ?: 0)
                 }
                 when (sort) {

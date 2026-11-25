@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import androidx.core.view.isVisible
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.databinding.ItemHomeBinding
 import com.aistra.hail.utils.AppIconCache
@@ -52,10 +53,12 @@ class PagerAdapter : ListAdapter<HomeRow, PagerAdapter.ViewHolder>(object : Diff
             }
             appName.isEnabled = !row.grayscale || !frozen
             appName.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
-            if (row.selected || row.state == AppInfo.State.NOT_FOUND) {
+            val unavailable = row.state == AppInfo.State.NOT_FOUND
+            appAvailability.isVisible = unavailable
+            if (row.selected || unavailable) {
                 appName.setTextColor(MaterialColors.getColor(appName, if (row.selected)
                     androidx.appcompat.R.attr.colorPrimary else com.google.android.material.R.attr.colorOnErrorContainer))
-            }
+            } else appName.setTextColor(holder.nameColors)
             appName.setTextSize(TypedValue.COMPLEX_UNIT_SP, row.fontSize)
         }
     }
@@ -67,6 +70,7 @@ class PagerAdapter : ListAdapter<HomeRow, PagerAdapter.ViewHolder>(object : Diff
 
     class ViewHolder(val binding: ItemHomeBinding) : RecyclerView.ViewHolder(binding.root) {
         var iconJob: Job? = null
+        val nameColors = binding.appName.textColors
     }
 
     interface OnItemClickListener { fun onItemClick(info: AppInfo) }

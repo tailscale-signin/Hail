@@ -3,6 +3,7 @@ package com.aistra.hail.utils
 import android.app.ActivityManager
 import android.app.AppOpsManager
 import android.content.pm.ApplicationInfo
+import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.annotation.RequiresApi
@@ -13,6 +14,28 @@ import org.lsposed.hiddenapibypass.HiddenApiBypass
 object HPackages {
     @Suppress("DEPRECATION")
     private const val INCLUDE_UNINSTALLED = PackageManager.GET_UNINSTALLED_PACKAGES
+    @Suppress("DEPRECATION")
+    private const val INSTALLED_FOR_USER = PackageManager.GET_DISABLED_COMPONENTS
+
+    data class UserPackage(val info: ApplicationInfo, val installed: Boolean)
+
+    private fun knownPackage(info: ApplicationInfo) = UserPackage(info, info.flags and ApplicationInfo.FLAG_INSTALLED != 0)
+
+    fun findForUser(pkg: String, listed: (String) -> UserPackage? = { packagesForUser()[it] }): UserPackage? {
+        getApplicationInfoOrNull(pkg, INSTALLED_FOR_USER)?.let { return UserPackage(it, true) }
+        if (HTarget.O) {
+            val installed = runCatching { app.getSystemService<LauncherApps>()?.getApplicationInfo(
+                pkg, INSTALLED_FOR_USER, android.os.Process.myUserHandle()) }.getOrNull()
+            if (installed != null) return UserPackage(installed, true)
+        }
+        return listed(pkg) ?: getApplicationInfoOrNull(pkg)?.let(::knownPackage)
+    }
+
+    /** One installed-only inventory for the calling profile, including disabled apps, plus retained package metadata. */
+    fun packagesForUser(): Map<String, UserPackage> = buildMap {
+        for (info in getInstalledApplications()) put(info.packageName, knownPackage(info))
+        for (info in getInstalledApplications(INSTALLED_FOR_USER)) put(info.packageName, UserPackage(info, true))
+    }
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     private object PackageFlags {
@@ -50,17 +73,18 @@ object HPackages {
     fun isSystemApp(info: ApplicationInfo): Boolean =
         info.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
 
-    /** Read back the per-user override after a write, including when Android silently declined it. */
-    fun hasRequestedEnabledSetting(packageName: String, disabled: Boolean): Boolean = runCatching {
-        when (app.packageManager.getApplicationEnabledSetting(packageName)) {
-            PackageManager.COMPONENT_ENABLED_STATE_DEFAULT -> getApplicationInfoOrNull(packageName)?.enabled == !disabled
-            PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> !disabled
+    fun isEnabledForUser(info: ApplicationInfo): Boolean = runCatching {
+        when (app.packageManager.getApplicationEnabledSetting(info.packageName)) {
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> true
             PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
             PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER,
-            PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> disabled
-            else -> false
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> false
+            else -> info.enabled
         }
-    }.getOrDefault(false)
+    }.getOrDefault(info.enabled)
+
+    fun hasRequestedEnabledSetting(packageName: String, disabled: Boolean): Boolean =
+        findForUser(packageName)?.takeIf { it.installed }?.let { isEnabledForUser(it.info) == !disabled } == true
 
     private val privateFlags by lazy { runCatching { ApplicationInfo::class.java.getField("privateFlags") }.getOrNull() }
     fun isHidden(info: ApplicationInfo): Boolean = runCatching { (privateFlags?.getInt(info) ?: 0) and 1 != 0 }.getOrDefault(false)
@@ -79,13 +103,7 @@ object HPackages {
         }
     } ?: false
 
-    fun isAppUninstalled(packageName: String): Boolean =
-        getApplicationInfoOrNull(packageName)?.run { flags and ApplicationInfo.FLAG_INSTALLED != ApplicationInfo.FLAG_INSTALLED }
-            ?: true
-
-    fun isPrivilegedApp(packageName: String): Boolean = getApplicationInfoOrNull(packageName)?.let {
-        (ApplicationInfo::class.java.getField("privateFlags").get(it) as Int) and 8 == 8
-    } ?: false
+    fun isAppUninstalled(packageName: String): Boolean = findForUser(packageName)?.installed != true
 
     fun canUninstallNormally(packageName: String): Boolean =
         getApplicationInfoOrNull(packageName)?.sourceDir?.startsWith("/data") ?: false
@@ -103,13 +121,8 @@ object HPackages {
 
     fun setAppDisabled(packageName: String, disabled: Boolean): Boolean {
         val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-        return try {
-            app.packageManager.setApplicationEnabledSetting(packageName, newState, 0)
-            hasRequestedEnabledSetting(packageName, disabled)
-        } catch (e: RuntimeException) {
-            HLog.e(e)
-            false
-        }
+        app.packageManager.setApplicationEnabledSetting(packageName, newState, 0)
+        return hasRequestedEnabledSetting(packageName, disabled)
     }
 
     @RequiresApi(Build.VERSION_CODES.P)

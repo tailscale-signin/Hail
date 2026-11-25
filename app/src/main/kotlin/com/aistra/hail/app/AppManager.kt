@@ -16,6 +16,8 @@ import com.aistra.hail.utils.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
+import java.lang.reflect.InvocationTargetException
+import kotlinx.coroutines.CancellationException
 
 object AppManager {
     val lockScreen: Boolean
@@ -35,41 +37,44 @@ object AppManager {
 
     fun isAppFrozen(info: ApplicationInfo, mode: String = HailData.workingMode): Boolean = when {
         mode.endsWith(HailData.STOP) -> info.flags and ApplicationInfo.FLAG_STOPPED != 0
-        mode.endsWith(HailData.DISABLE) -> !info.enabled
+        mode.endsWith(HailData.DISABLE) -> !HPackages.isEnabledForUser(info)
         mode.endsWith(HailData.HIDE) -> HPackages.isHidden(info)
         mode.endsWith(HailData.SUSPEND) -> HTarget.N && info.flags and ApplicationInfo.FLAG_SUSPENDED != 0
         else -> !info.enabled || HPackages.isHidden(info) || (HTarget.N && info.flags and ApplicationInfo.FLAG_SUSPENDED != 0)
     }
 
-    fun state(info: ApplicationInfo?, mode: String = HailData.workingMode): AppInfo.State = when {
-        info == null || info.flags and ApplicationInfo.FLAG_INSTALLED == 0 -> AppInfo.State.NOT_FOUND
-        isAppFrozen(info, mode) -> AppInfo.State.FROZEN
+    fun state(pkg: HPackages.UserPackage?, mode: String = HailData.workingMode): AppInfo.State = when {
+        pkg == null || !pkg.installed -> AppInfo.State.NOT_FOUND
+        isAppFrozen(pkg.info, mode) -> AppInfo.State.FROZEN
         else -> AppInfo.State.UNFROZEN
     }
 
     suspend fun snapshotFrozenStates(apps: List<AppInfo>): Map<String, Boolean> = mutations.withLock {
         withContext(Dispatchers.IO) {
             val mode = HailData.workingMode
+            val inventory by lazy { HPackages.packagesForUser() }
             buildMap {
                 for (item in apps) {
                     if (item.packageName == BuildConfig.APPLICATION_ID) continue
-                    val current = state(HPackages.getApplicationInfoOrNull(item.packageName), mode)
+                    val current = state(HPackages.findForUser(item.packageName) { inventory[it] }, mode)
                     if (current != AppInfo.State.NOT_FOUND) put(item.packageName, current == AppInfo.State.FROZEN)
                 }
             }
         }
     }
 
-    suspend fun changeFrozen(packages: Collection<String>, frozen: Boolean, includeLabel: Boolean = true): FreezeResult {
-        val mode = HailData.workingMode
+    suspend fun changeFrozen(packages: Collection<String>, frozen: Boolean, includeLabel: Boolean = true,
+                             mode: String = HailData.workingMode): FreezeResult {
         return mutations.withLock {
             withContext(Dispatchers.IO) {
                 val infoByPackage = mutableMapOf<String, ApplicationInfo>()
+                val inventory by lazy { HPackages.packagesForUser() }
+                var androidError: String? = null
                 val result = FreezeBatch.run(packages, BuildConfig.APPLICATION_ID, frozen,
                     state = { pkg ->
-                        val info = HPackages.getApplicationInfoOrNull(pkg)
-                        if (includeLabel && info != null) infoByPackage[pkg] = info
-                        state(info, mode)
+                        val record = HPackages.findForUser(pkg) { inventory[it] }
+                        if (includeLabel && record != null) infoByPackage[pkg] = record.info
+                        state(record, mode)
                     },
                     apply = { batch ->
                         when (mode) {
@@ -78,8 +83,12 @@ object AppManager {
                             else -> batch.filterTo(linkedSetOf()) { pkg ->
                                 try {
                                     setAppFrozen(pkg, frozen, mode)
-                                } catch (e: RuntimeException) {
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
                                     HLog.e(e)
+                                    val cause = (e as? InvocationTargetException)?.targetException ?: e
+                                    androidError = cause.message?.lineSequence()?.firstOrNull()?.take(350)
                                     false
                                 }
                             }
@@ -95,7 +104,7 @@ object AppManager {
                 val failureMessage = if (failed != null && mode.endsWith(HailData.DISABLE) &&
                     result.changed.isEmpty() && result.unchanged.isEmpty() && result.missing.isEmpty()) {
                     val info = infoByPackage[failed] ?: HPackages.getApplicationInfoOrNull(failed)
-                    disableFailureMessage(failed, mode, info)
+                    listOfNotNull(disableFailureMessage(failed, mode, info), androidError).joinToString("\n").ifBlank { null }
                 } else null
                 result.copy(singleLabel = label, failureMessage = failureMessage)
             }

@@ -5,10 +5,12 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.widget.EditText
+import android.widget.FrameLayout
 import androidx.preference.PreferenceManager
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -19,8 +21,11 @@ import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import com.aistra.hail.R
 import com.aistra.hail.app.AppManager
+import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.HailData
 import com.aistra.hail.ui.main.MainActivity
+import com.aistra.hail.ui.home.HomeRow
+import com.aistra.hail.ui.home.PagerAdapter
 import com.aistra.hail.utils.HPackages
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -58,6 +63,9 @@ class SystemAppsTest {
     }
 
     private fun text(id: Int) = By.text(ctx.getString(id))
+
+    private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
+        instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText().trim() }
 
     private fun openToolbarItem(id: String, title: Int) {
         val description = ctx.getString(title)
@@ -156,6 +164,25 @@ class SystemAppsTest {
                     pm.getApplicationEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                 }
                 assertEquals(wasChecked, HailData.isChecked(pkg))
+                val saved = HailData.checkedList.toList()
+                try {
+                    scenario.onActivity {
+                        HailData.checkedList.clear()
+                        HailData.checkedList.add(AppInfo(pkg))
+                        prefs.edit().putString(HailData.WORKING_MODE, HailData.MODE_DEFAULT).commit()
+                    }
+                    await(By.res(ctx.packageName, "nav_home")).click()
+                    await(By.res(ctx.packageName, "app_name").text(info.loadLabel(pm).toString())).longClick()
+                    await(text(R.string.package_status_controls)).click()
+                    await(text(R.string.disable_with_shizuku)).click()
+                    waitFor("Home disabled the package for this user") { pm.getApplicationEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER }
+                    await(text(R.string.enable_with_shizuku)).click()
+                    waitFor("Home enabled the package again") { pm.getApplicationEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED }
+                    assertEquals(HailData.MODE_DEFAULT, HailData.workingMode)
+                    device.pressBack()
+                } finally {
+                    scenario.onActivity { HailData.checkedList.clear(); HailData.checkedList.addAll(saved) }
+                }
                 Log.i("HailSystemApp", "Disabled and re-enabled preinstalled $pkg through Shizuku shell")
             }
         } finally {
@@ -174,11 +201,82 @@ class SystemAppsTest {
             val denied = AppManager.changeFrozen(listOf(pkg), true)
             assertEquals(setOf(pkg), denied.failed)
             assertTrue(denied.changed.isEmpty())
-            assertEquals(ctx.getString(R.string.system_app_change_failed, pkg), AppManager.resultMessage(denied, true))
+            val message = AppManager.resultMessage(denied, true)
+            assertTrue(message.startsWith(ctx.getString(R.string.system_app_change_failed, pkg)))
+            assertTrue("Expected the platform refusal", message.lineSequence().drop(1).any { it.contains(pkg) })
             assertEquals(oldSetting, pm.getApplicationEnabledSetting(pkg))
         } finally {
             prefs.edit().putString(HailData.WORKING_MODE, oldMode).commit()
         }
         Unit
+    }
+
+    @Test fun retainedSystemAppShowsProfileStatusAndCanBeRecheckedFromHome() {
+        val info = fixture()
+        assumeTrue(Build.HARDWARE in setOf("ranchu", "goldfish"))
+        val pkg = info.packageName
+        val user = HPackages.myUserId
+        val label = info.loadLabel(pm).toString()
+        val saved = HailData.checkedList.toList()
+        val installed = "package:$pkg"
+        fun listed() = shell("pm list packages --user $user $pkg").lineSequence().any { it == installed }
+        assertTrue(listed())
+        try {
+            assertTrue(shell("pm uninstall -k --user $user $pkg").contains("Success"))
+            assertFalse(listed())
+            assertTrue(shell("pm list packages -u --user $user $pkg").lineSequence().any { it == installed })
+            assertEquals(false, HPackages.findForUser(pkg)?.installed)
+            assertEquals(false, HPackages.packagesForUser()[pkg]?.installed)
+            assertEquals(setOf(pkg), runBlocking { AppManager.changeFrozen(listOf(pkg), true) }.missing)
+            assertFalse(listed())
+            instrumentation.runOnMainSync { HailData.checkedList.clear(); HailData.checkedList.add(AppInfo(pkg)) }
+            ActivityScenario.launch(MainActivity::class.java).use {
+                await(By.res(ctx.packageName, "nav_home")).click()
+                await(text(R.string.package_unavailable))
+                val row = By.res(ctx.packageName, "app_name").text(label)
+                await(row).longClick()
+                fun report(id: Int) = By.res(ctx.packageName, "report").textContains(ctx.getString(id))
+                await(report(R.string.package_retained_here))
+                await(text(R.string.check_again)).click()
+                assertFalse(listed())
+                assertTrue(shell("cmd package install-existing --user $user $pkg").contains(pkg))
+                waitFor("Android restored fixture") { listed() }
+                await(text(R.string.check_again)).click()
+                await(report(R.string.package_enabled))
+                device.pressBack()
+                await(row)
+                assertTrue(device.wait(Until.gone(text(R.string.package_unavailable)), 10_000))
+            }
+            Log.i("HailSystemApp", "Verified retained $pkg, no mutation while absent, restored current-user Home controls")
+        } finally {
+            if (!listed()) shell("cmd package install-existing --user $user $pkg")
+            instrumentation.runOnMainSync { HailData.checkedList.clear(); HailData.checkedList.addAll(saved) }
+            device.pressHome()
+        }
+    }
+
+    @Test fun installedEvidenceAndRecycledHomeColorsAreIndependentOfRetainedFlags() {
+        val info = fixture()
+        val missingFlag = ApplicationInfo(info).apply { flags = flags and ApplicationInfo.FLAG_INSTALLED.inv() }
+        val verified = HPackages.UserPackage(missingFlag, true)
+        assertEquals(AppInfo.State.UNFROZEN, AppManager.state(verified, HailData.MODE_SHIZUKU_DISABLE))
+        assertEquals(AppInfo.State.NOT_FOUND, AppManager.state(verified.copy(installed = false), HailData.MODE_SHIZUKU_DISABLE))
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { host ->
+                val adapter = PagerAdapter()
+                val holder = adapter.onCreateViewHolder(FrameLayout(host), 0)
+                val colors = holder.binding.appName.textColors
+                val absent = HomeRow(AppInfo("test.absent"), null, "Absent", AppInfo.State.NOT_FOUND,
+                    false, false, false, true, 14f)
+                val active = absent.copy(info = AppInfo(info.packageName), application = info, state = AppInfo.State.UNFROZEN)
+                adapter.submitList(listOf(absent, active))
+                adapter.onBindViewHolder(holder, 0)
+                assertEquals(android.view.View.VISIBLE, holder.binding.appAvailability.visibility)
+                adapter.onBindViewHolder(holder, 1)
+                assertEquals(android.view.View.GONE, holder.binding.appAvailability.visibility)
+                assertSame(colors, holder.binding.appName.textColors)
+                adapter.onViewRecycled(holder)
+            }
+        }
     }
 }

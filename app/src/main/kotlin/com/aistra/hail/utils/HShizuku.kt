@@ -65,23 +65,19 @@ object HShizuku {
         false
     }
 
-    fun setAppDisabled(packageName: String, disabled: Boolean): Boolean =
-        runCatching {
-            val pm = asInterface("android.content.pm.IPackageManager", "package")
-            val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-            pm::class.java.getMethod(
-                "setApplicationEnabledSetting",
-                String::class.java,
-                Int::class.java,
-                Int::class.java,
-                Int::class.java,
-                String::class.java
-            ).invoke(pm, packageName, newState, 0, HPackages.myUserId, callerPackage)
-            HPackages.hasRequestedEnabledSetting(packageName, disabled)
-        }.getOrElse {
-            HLog.e(it)
-            false
-        }
+    fun setAppDisabled(packageName: String, disabled: Boolean): Boolean {
+        val pm = asInterface("android.content.pm.IPackageManager", "package")
+        val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        pm::class.java.getMethod(
+            "setApplicationEnabledSetting",
+            String::class.java,
+            Int::class.java,
+            Int::class.java,
+            Int::class.java,
+            String::class.java
+        ).invoke(pm, packageName, newState, 0, HPackages.myUserId, callerPackage)
+        return HPackages.hasRequestedEnabledSetting(packageName, disabled)
+    }
 
     fun setAppHidden(packageName: String, hidden: Boolean): Boolean {
         HPackages.getApplicationInfoOrNull(packageName) ?: return false

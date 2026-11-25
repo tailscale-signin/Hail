@@ -85,6 +85,10 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             onItemClickListener = this@PagerFragment
             onItemLongClickListener = this@PagerFragment
         }
+        childFragmentManager.setFragmentResultListener(PackageStatusDialog.RESULT, viewLifecycleOwner) { _, result ->
+            result.getString(PackageStatusDialog.REMOVE)?.let { removeCheckedApp(it) }
+            updateCurrentList()
+        }
         binding.recyclerView.run {
             layoutManager = GridLayoutManager(
                 activity, resources.getInteger(
@@ -157,15 +161,18 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         listJob = viewLifecycleOwner.lifecycleScope.launch {
             val rows = withContext(Dispatchers.IO) {
                 val collator = Collator.getInstance()
+                val packages = if (snapshot.isEmpty()) emptyMap() else HPackages.packagesForUser()
                 snapshot.mapNotNull { row ->
                     ensureActive()
                     val pkg = row.info.packageName
-                    val application = HPackages.getApplicationInfoOrNull(pkg)
+                    val listed = packages[pkg]
+                    val record = if (listed?.installed == true) listed else HPackages.findForUser(pkg, packages::get)
+                    val application = record?.info
                     val label = application?.loadLabel(app.packageManager)?.toString() ?: pkg
                     if (search.isNotEmpty() && !(nineKey && NineKeySearch.search(search, pkg, label))
                         && !FuzzySearch.search(pkg, search) && !FuzzySearch.search(label, search)
                         && !PinyinSearch.searchPinyinAll(label, search)) return@mapNotNull null
-                    row.copy(application = application, label = label, state = AppManager.state(application, mode))
+                    row.copy(application = application, label = label, state = AppManager.state(record, mode))
                 }.sortedWith(compareByDescending<HomeRow> { it.pinned }.thenComparator { a, b -> collator.compare(a.label, b.label) })
             }
             binding.empty.isVisible = rows.isEmpty()
@@ -203,8 +210,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             return
         }
         if (pagerAdapter.currentList.find { it.info == info }?.state == AppInfo.State.NOT_FOUND) {
-            Snackbar.make(activity.fab, R.string.app_not_installed, Snackbar.LENGTH_LONG)
-                .setAction(R.string.action_remove_home) { removeCheckedApp(info.packageName) }.show()
+            showPackageStatus(info.packageName)
             return
         }
         launchApp(info.packageName)
@@ -213,7 +219,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
     override fun onItemLongClick(info: AppInfo): Boolean {
         val row = pagerAdapter.currentList.firstOrNull { it.info == info } ?: return false
         if (row.state == AppInfo.State.NOT_FOUND && (!multiselect || info !in selectedList)) {
-            exportToClipboard(listOf(info))
+            showPackageStatus(info.packageName)
             return true
         }
         if (info in selectedList) {
@@ -223,8 +229,8 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         val pkg = info.packageName
         val frozen = row.state == AppInfo.State.FROZEN
         val action = getString(if (frozen) R.string.action_unfreeze else R.string.action_freeze)
-        MaterialAlertDialogBuilder(activity).setTitle(row.label).setItems(
-            resources.getStringArray(R.array.home_action_entries).filter {
+        val systemApp = row.application?.let(HPackages::isSystemApp) == true
+        val entries = resources.getStringArray(R.array.home_action_entries).filter {
                 (it != getString(R.string.action_freeze) || !frozen) && (it != getString(R.string.action_unfreeze) || frozen) && (it != getString(
                     R.string.action_pin
                 ) || !info.pinned) && (it != getString(R.string.action_unpin) || info.pinned) && (it != getString(
@@ -232,9 +238,14 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                 ) || !info.whitelisted) && (it != getString(R.string.action_remove_whitelist) || info.whitelisted) && (it != getString(
                     R.string.action_unfreeze_remove_home
                 ) || frozen)
-            }.toTypedArray()
-        ) { _, which ->
-            when (which) {
+            }
+        val menu = if (systemApp) listOf(getString(R.string.package_status_controls)) + entries else entries
+        MaterialAlertDialogBuilder(activity).setTitle(row.label).setItems(menu.toTypedArray()) { _, index ->
+            if (systemApp && index == 0) {
+                showPackageStatus(pkg)
+                return@setItems
+            }
+            when (if (systemApp) index - 1 else index) {
                 0 -> launchApp(pkg)
                 1 -> setListFrozen(!frozen, listOf(info))
                 2 -> {
@@ -296,6 +307,10 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             )
         }.setNegativeButton(android.R.string.cancel, null).show()
         return true
+    }
+
+    private fun showPackageStatus(pkg: String, message: String? = null) {
+        PackageStatusDialog.show(childFragmentManager, pkg, message)
     }
 
     private fun tagDialog(info: AppInfo) {
@@ -495,7 +510,21 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                         HailData.saveApps()
                     }
                 }
-                HUI.showToast(AppManager.resultMessage(result, frozen))
+                val message = AppManager.resultMessage(result, frozen)
+                if (isResumed && packages.size == 1 && (result.missing.isNotEmpty() || result.failed.isNotEmpty())) {
+                    showPackageStatus(packages.single(), message.takeIf { result.failed.isNotEmpty() })
+                } else if (isResumed && packages.size > 1 && (result.missing.isNotEmpty() || result.failed.isNotEmpty())) {
+                    val details = buildString {
+                        append(message)
+                        for ((title, names) in listOf(R.string.package_unavailable to result.missing,
+                            R.string.package_change_refused to result.failed)) {
+                            if (names.isNotEmpty()) append("\n\n").append(getString(title)).append('\n').append(names.joinToString("\n"))
+                        }
+                    }
+                    MaterialAlertDialogBuilder(host).setTitle(if (frozen) R.string.action_freeze else R.string.action_unfreeze)
+                        .setMessage(details).setPositiveButton(android.R.string.ok, null)
+                        .setNeutralButton(R.string.copy_details) { _, _ -> HUI.copyText(details) }.show()
+                } else HUI.showToast(message)
             } finally {
                 operations--
                 if (_binding === origin) {
@@ -593,7 +622,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         val tagId = tag?.second ?: 0
         val mode = HailData.workingMode
         val packages = withContext(Dispatchers.IO) {
-            HPackages.getInstalledApplications().filter { AppManager.isAppFrozen(it, mode) }.map { it.packageName }
+            HPackages.packagesForUser().values.filter { it.installed && AppManager.isAppFrozen(it.info, mode) }.map { it.info.packageName }
         }
         val added = packages.filterNot(HailData::isChecked)
         added.forEach { HailData.addCheckedApp(it, tagId, false) }

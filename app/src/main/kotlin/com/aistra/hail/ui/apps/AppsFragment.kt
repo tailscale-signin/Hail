@@ -44,6 +44,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     private lateinit var appsAdapter: AppsAdapter
 
     private var contextApp: ApplicationInfo? = null
+    private var contextTargetDisabled = false
 
 
     private var exportApkPkg: String? = null
@@ -119,16 +120,18 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
         menu: ContextMenu, v: View, menuInfo: ContextMenu.ContextMenuInfo?
     ) {
         val holder = (menuInfo as? HRecyclerView.RecyclerViewContextMenuInfo)?.viewHolder as? AppsAdapter.ViewHolder ?: return
-        val info = appsAdapter.currentList.getOrNull(holder.bindingAdapterPosition)?.info ?: return
+        val row = appsAdapter.currentList.getOrNull(holder.bindingAdapterPosition) ?: return
+        val info = row.info
         contextApp = info
+        contextTargetDisabled = if (HailData.workingMode.endsWith(HailData.DISABLE)) !row.frozen else info.enabled
         menu.setHeaderTitle(info.loadLabel(activity.packageManager))
         activity.menuInflater.inflate(R.menu.menu_apps_action, menu)
-        if (HPackages.isSystemApp(info) && info.flags and ApplicationInfo.FLAG_INSTALLED != 0 &&
+        if (HPackages.isSystemApp(info) && row.installed &&
             info.packageName != app.packageName) {
             menu.findItem(R.id.action_system_enabled).apply {
                 isVisible = true
                 setTitle(if (HailData.workingMode.endsWith(HailData.DISABLE)) {
-                    if (info.enabled) R.string.disable_app else R.string.enable_app
+                    if (contextTargetDisabled) R.string.disable_app else R.string.enable_app
                 } else {
                     if (info.enabled) R.string.disable_in_settings else R.string.enable_in_settings
                 })
@@ -175,7 +178,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             return
         }
         // The action was labelled from this snapshot. Repeating it must never reverse a newer change.
-        val disable = info.enabled
+        val disable = contextTargetDisabled
         viewLifecycleOwner.lifecycleScope.launch {
             val result = AppManager.changeFrozen(listOf(pkg), disable)
             when {
