@@ -187,8 +187,7 @@ object HShizuku {
         fun write(pm: Any, packages: List<String>, target: Int, user: Int) {
             val type = PackageManager.ComponentEnabledSetting::class.java
             val settings = packages.map { HiddenApiBypass.newInstance(type, it, target, 0) }
-            pm.javaClass.getMethod("setComponentEnabledSettings", List::class.java, Int::class.java, String::class.java)
-                .invoke(pm, settings, user, BuildConfig.APPLICATION_ID)
+            HiddenApiBypass.invoke(pm.javaClass, pm, "setComponentEnabledSettings", settings, user, BuildConfig.APPLICATION_ID)
         }
     }
 

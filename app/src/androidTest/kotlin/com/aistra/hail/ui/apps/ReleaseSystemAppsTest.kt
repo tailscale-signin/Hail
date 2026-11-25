@@ -196,6 +196,18 @@ class ReleaseSystemAppsTest {
             if (fork) menu(R.string.action_freeze_all, "action_freeze_all")
             menu(R.string.action_unfreeze_all, "action_unfreeze_all")
             packages.forEach { expectSetting(it, enabled) }
+            if (distribution == "upstream" && !root) {
+                val pkg = packages.last()
+                setFixture(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
+                for (freeze in listOf(true, false)) {
+                    if (freeze) menu(R.string.action_freeze_all, "action_freeze_all")
+                    else menu(R.string.action_unfreeze_all, "action_unfreeze_all")
+                    expectSetting(packages.first(), if (freeze) disableState else enabled)
+                    device.waitForIdle()
+                    expectSetting(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
+                }
+                Log.i("HailParity", "Upstream shell retained setting 4 through freeze and thaw while Clock changed")
+            }
             if (fork) {
                 val pkg = packages.last()
                 setFixture(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
