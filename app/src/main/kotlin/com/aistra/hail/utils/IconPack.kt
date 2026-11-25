@@ -9,30 +9,38 @@ import com.aistra.hail.HailApp.Companion.app
 import com.aistra.hail.app.HailData
 
 object IconPack {
-    @SuppressLint("DiscouragedApi")
-    fun loadIcon(packageName: String): Bitmap? = runCatching {
-//        val componentName = app.packageManager.getLaunchIntentForPackage(packageName)
-//            ?.run { resolveActivity(app.packageManager).toString() } ?: return null
-        val pack = HailData.iconPack
-        if (pack == HailData.ACTION_NONE) return null
-        val resources = app.packageManager.getResourcesForApplication(pack)
-        getResourceName(resources, pack, packageName)?.let {
-            return BitmapFactory.decodeResource(resources, resources.getIdentifier(it, "drawable", pack))
-        }
-    }.getOrNull()
+    private data class Index(val pack: String, val resources: Resources, val icons: Map<String, String>)
+    private var loaded: Index? = null
+
+    @Synchronized fun clear() { loaded = null }
 
     @SuppressLint("DiscouragedApi")
-    private fun getResourceName(resources: Resources, resPackage: String, componentName: String): String? {
-        val id = resources.getIdentifier("appfilter", "xml", resPackage)
-        if (id == 0) return null
-        resources.getXml(id).use { parser ->
+    fun loadIcon(packageName: String, pack: String = HailData.iconPack): Bitmap? {
+        if (pack == HailData.ACTION_NONE) return null
+        return runCatching {
+            val index = index(pack)
+            val name = index.icons[packageName] ?: return null
+            val id = index.resources.getIdentifier(name, "drawable", pack)
+            if (id != 0) BitmapFactory.decodeResource(index.resources, id) else null
+        }.getOrNull()
+    }
+
+    @SuppressLint("DiscouragedApi")
+    @Synchronized private fun index(pack: String): Index {
+        loaded?.takeIf { it.pack == pack }?.let { return it }
+        val resources = app.packageManager.getResourcesForApplication(pack)
+        val id = resources.getIdentifier("appfilter", "xml", pack)
+        val icons = mutableMapOf<String, String>()
+        if (id != 0) resources.getXml(id).use { parser ->
             while (parser.eventType != XmlResourceParser.END_DOCUMENT) {
-                if (parser.eventType == XmlResourceParser.START_TAG &&
-                    parser.getAttributeValue(null, "component")?.contains(componentName) == true
-                ) return parser.getAttributeValue(null, "drawable")
+                if (parser.eventType == XmlResourceParser.START_TAG) {
+                    val pkg = parser.getAttributeValue(null, "component")?.substringAfter('{')?.substringBefore('/')?.removeSuffix("}")
+                    val drawable = parser.getAttributeValue(null, "drawable")
+                    if (pkg != null && drawable != null && pkg !in icons) icons[pkg] = drawable
+                }
                 parser.next()
             }
         }
-        return null
+        return Index(pack, resources, icons).also { loaded = it }
     }
 }

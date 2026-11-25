@@ -24,10 +24,14 @@ object HPolicy {
     fun setAppHidden(packageName: String, hidden: Boolean): Boolean =
         isDeviceOwnerActive && dpm.setApplicationHidden(admin, packageName, hidden)
 
-    fun setAppSuspended(packageName: String, suspended: Boolean): Boolean =
-        isDeviceOwnerActive && HTarget.N && dpm.setPackagesSuspended(
-            admin, arrayOf(packageName), suspended
-        ).isEmpty()
+    fun setSuspended(packages: List<String>, suspended: Boolean): Set<String> = try {
+        if (HTarget.N && isDeviceOwnerActive) {
+            packages.toSet() - dpm.setPackagesSuspended(admin, packages.toTypedArray(), suspended).toSet()
+        } else emptySet()
+    } catch (e: RuntimeException) {
+        HLog.e(e)
+        emptySet()
+    }
 
     fun uninstallApp(packageName: String): Boolean = when {
         isDeviceOwnerActive -> {

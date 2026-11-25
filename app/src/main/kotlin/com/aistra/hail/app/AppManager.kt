@@ -1,6 +1,15 @@
 package com.aistra.hail.app
 
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import com.aistra.hail.HailApp.Companion.app
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import com.aistra.hail.R
 import com.aistra.hail.BuildConfig
 import com.aistra.hail.utils.*
 import kotlinx.coroutines.Dispatchers
@@ -18,59 +27,102 @@ object AppManager {
             }
         }
 
-    fun isAppFrozen(packageName: String): Boolean = with(HailData.workingMode) {
-        when {
-            endsWith(HailData.STOP) -> HPackages.isAppStopped(packageName)
-            endsWith(HailData.DISABLE) -> HPackages.isAppDisabled(packageName)
-            endsWith(HailData.HIDE) -> HPackages.isAppHidden(packageName)
-            endsWith(HailData.SUSPEND) -> HPackages.isAppSuspended(packageName)
-            else -> HPackages.isAppDisabled(packageName)
-                    || HPackages.isAppHidden(packageName)
-                    || HPackages.isAppSuspended(packageName)
-        }
+    private val mutations = Mutex()
+    private val changed = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val changes = changed.asSharedFlow()
+
+    fun isAppFrozen(info: ApplicationInfo, mode: String = HailData.workingMode): Boolean = when {
+        mode.endsWith(HailData.STOP) -> info.flags and ApplicationInfo.FLAG_STOPPED != 0
+        mode.endsWith(HailData.DISABLE) -> !info.enabled
+        mode.endsWith(HailData.HIDE) -> HPackages.isHidden(info)
+        mode.endsWith(HailData.SUSPEND) -> HTarget.N && info.flags and ApplicationInfo.FLAG_SUSPENDED != 0
+        else -> !info.enabled || HPackages.isHidden(info) || (HTarget.N && info.flags and ApplicationInfo.FLAG_SUSPENDED != 0)
     }
 
-    fun setListFrozen(frozen: Boolean, vararg appInfo: AppInfo): String? {
-        val excludeMe = appInfo.filter { it.packageName != BuildConfig.APPLICATION_ID }
-        var i = 0
-        var denied = false
-        var name = String()
-        when (HailData.workingMode) {
-            // call setListFrozen for some batch-style working mode here
-            // fallback to setAppFrozen otherwise
-            else -> {
-                excludeMe.forEach {
-                    when {
-                        setAppFrozen(it.packageName, frozen) -> {
-                            i++
-                            name = it.name.toString()
-                        }
+    fun state(info: ApplicationInfo?, mode: String = HailData.workingMode): AppInfo.State = when {
+        info == null -> AppInfo.State.NOT_FOUND
+        isAppFrozen(info, mode) -> AppInfo.State.FROZEN
+        else -> AppInfo.State.UNFROZEN
+    }
 
-                        it.applicationInfo != null -> denied = true
-                    }
-                }
+    suspend fun changeFrozen(packages: Collection<String>, frozen: Boolean): FreezeResult {
+        val mode = HailData.workingMode
+        val result = mutations.withLock {
+            withContext(Dispatchers.IO) {
+                FreezeBatch.run(packages, BuildConfig.APPLICATION_ID, frozen,
+                    state = { state(HPackages.getApplicationInfoOrNull(it), mode) },
+                    apply = { batch ->
+                        when (mode) {
+                            HailData.MODE_OWNER_SUSPEND -> HPolicy.setSuspended(batch, frozen)
+                            HailData.MODE_DHIZUKU_SUSPEND -> HDhizuku.setSuspended(batch, frozen)
+                            else -> batch.filterTo(linkedSetOf()) { pkg ->
+                                try {
+                                    setAppFrozen(pkg, frozen, mode)
+                                } catch (e: RuntimeException) {
+                                    HLog.e(e)
+                                    false
+                                }
+                            }
+                        }
+                    })
             }
         }
-        return if (denied && i == 0) null else if (i == 1) name else i.toString()
+        if (result.changed.isNotEmpty()) {
+            changed.tryEmit(Unit)
+            app.setAutoFreezeService()
+        }
+        return result
     }
 
-    fun setAppFrozen(packageName: String, frozen: Boolean): Boolean =
-        packageName != BuildConfig.APPLICATION_ID && when (HailData.workingMode) {
+    fun resultMessage(result: FreezeResult, frozen: Boolean): String {
+        if (result.failed.isNotEmpty() || result.missing.isNotEmpty()) {
+            if (result.failed.size == 1 && result.missing.isEmpty() && result.changed.isEmpty() && result.unchanged.isEmpty()) {
+                return app.getString(if (!frozen && HailData.workingMode.endsWith(HailData.STOP))
+                    R.string.stop_unfreeze else R.string.permission_denied)
+            }
+            return app.getString(R.string.freeze_partial, result.changed.size, result.unchanged.size,
+                result.missing.size, result.failed.size)
+        }
+        val display = result.changed.singleOrNull() ?: result.changed.size.toString()
+        return app.getString(if (frozen) R.string.msg_freeze else R.string.msg_unfreeze, display)
+    }
+
+    suspend fun prepareLaunch(pkg: String): Intent? {
+        val mode = HailData.workingMode
+        // Launching is the Android operation that clears a force-stop.
+        if (!mode.endsWith(HailData.STOP)) {
+            val result = changeFrozen(listOf(pkg), false)
+            if (pkg in result.missing) return null
+            if (pkg in result.failed) throw IllegalStateException(resultMessage(result, false))
+        }
+        return withContext(Dispatchers.IO) {
+            var intent = app.packageManager.getLaunchIntentForPackage(pkg)
+            if (intent == null && mode == HailData.MODE_ISLAND_HIDE) {
+                for (attempt in 1..5) {
+                    delay(100)
+                    intent = app.packageManager.getLaunchIntentForPackage(pkg)
+                    if (intent != null) break
+                }
+            }
+            intent
+        }
+    }
+
+    private fun setAppFrozen(packageName: String, frozen: Boolean, mode: String): Boolean =
+        when (mode) {
             HailData.MODE_OWNER_HIDE -> HPolicy.setAppHidden(packageName, frozen)
-            HailData.MODE_OWNER_SUSPEND -> HPolicy.setAppSuspended(packageName, frozen)
             HailData.MODE_DHIZUKU_HIDE -> HDhizuku.setAppHidden(packageName, frozen)
-            HailData.MODE_DHIZUKU_SUSPEND -> HDhizuku.setAppSuspended(packageName, frozen)
-            HailData.MODE_SU_STOP -> !frozen || HShell.forceStopApp(packageName)
+            HailData.MODE_SU_STOP -> frozen && HShell.forceStopApp(packageName)
             HailData.MODE_SU_DISABLE -> HShell.setAppDisabled(packageName, frozen)
             HailData.MODE_SU_HIDE -> HShell.setAppHidden(packageName, frozen)
             HailData.MODE_SU_SUSPEND -> HShell.setAppSuspended(packageName, frozen)
-            HailData.MODE_SHIZUKU_STOP -> !frozen || HShizuku.forceStopApp(packageName)
+            HailData.MODE_SHIZUKU_STOP -> frozen && HShizuku.forceStopApp(packageName)
             HailData.MODE_SHIZUKU_DISABLE -> HShizuku.setAppDisabled(packageName, frozen)
             HailData.MODE_SHIZUKU_HIDE -> HShizuku.setAppHidden(packageName, frozen)
             HailData.MODE_SHIZUKU_SUSPEND -> HShizuku.setAppSuspended(packageName, frozen)
             HailData.MODE_ISLAND_HIDE -> HIsland.setAppHidden(packageName, frozen)
             HailData.MODE_ISLAND_SUSPEND -> HIsland.setAppSuspended(packageName, frozen)
-            HailData.MODE_PRIVAPP_STOP -> !frozen || HPackages.forceStopApp(packageName)
+            HailData.MODE_PRIVAPP_STOP -> frozen && HPackages.forceStopApp(packageName)
             HailData.MODE_JAILBREAK_DISABLE, HailData.MODE_PRIVAPP_DISABLE ->
                 HPackages.setAppDisabled(packageName, frozen)
 

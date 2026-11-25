@@ -32,6 +32,12 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.MenuHost
 import androidx.core.view.MenuProvider
+import androidx.fragment.app.viewModels
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import com.aistra.hail.HailApp.Companion.app
@@ -59,6 +65,14 @@ import me.zhanghai.compose.preference.*
 import rikka.shizuku.Shizuku
 
 class SettingsFragment : MainFragment(), MenuProvider {
+    private val backups: BackupViewModel by viewModels()
+    private val saveBackup = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) {
+        it?.let { uri -> backups.open(uri, restore = false) }
+    }
+    private val loadBackup = registerForActivityResult(ActivityResultContracts.OpenDocument()) {
+        it?.let { uri -> backups.open(uri, restore = true) }
+    }
+
     private val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -78,6 +92,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
 
     @Composable
     private fun SettingsScreen() {
+        BackupDialog()
         val autoFreezeAfterLock = rememberPreferenceState(HailData.AUTO_FREEZE_AFTER_LOCK, false)
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             listPreference(
@@ -100,6 +115,14 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 titleId = R.string.action_biometric,
                 icon = Icons.Outlined.Fingerprint
             )
+            horizontalDivider()
+            preferenceCategory(key = "backup", title = { Text(stringResource(R.string.backup_title)) })
+            preference(key = "backup_save", title = { Text(stringResource(R.string.backup_save)) },
+                icon = { Icon(Icons.Outlined.Save, contentDescription = null) },
+                onClick = { saveBackup.launch("Hail-backup.json") })
+            preference(key = "backup_restore", title = { Text(stringResource(R.string.backup_restore)) },
+                icon = { Icon(Icons.Outlined.Restore, contentDescription = null) },
+                onClick = { loadBackup.launch(arrayOf("application/json", "text/*", "application/octet-stream")) })
             horizontalDivider()
             preferenceCategory(key = "customize", title = { Text(text = stringResource(R.string.title_customize)) })
             listPreference(
@@ -277,6 +300,43 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 onClick = ::resetDynamicShortcuts
             )
         }
+    }
+
+    @Composable
+    private fun BackupDialog() {
+        val state by backups.state.collectAsState()
+        val current = state
+        if (current == BackupViewModel.State.Idle) return
+        val dismiss = {
+            backups.state.value = BackupViewModel.State.Idle
+            if (current == BackupViewModel.State.Restored) activity.recreate()
+        }
+        AlertDialog(
+            onDismissRequest = { if (current != BackupViewModel.State.Busy) dismiss() },
+            title = { Text(stringResource(R.string.backup_title)) },
+            text = {
+                when (current) {
+                    is BackupViewModel.State.Preview -> Text(stringResource(R.string.backup_preview,
+                        current.data.apps.size, current.data.tags.size))
+                    BackupViewModel.State.Busy -> CircularProgressIndicator()
+                    BackupViewModel.State.Saved -> Text(stringResource(R.string.backup_saved))
+                    BackupViewModel.State.Restored -> Text(stringResource(R.string.backup_restored))
+                    else -> Text(stringResource(R.string.backup_failed))
+                }
+            },
+            confirmButton = {
+                if (current is BackupViewModel.State.Preview) TextButton(onClick = backups::confirm) {
+                    Text(stringResource(R.string.backup_replace))
+                } else if (current != BackupViewModel.State.Busy) TextButton(onClick = dismiss) {
+                    Text(stringResource(android.R.string.ok))
+                }
+            },
+            dismissButton = {
+                if (current is BackupViewModel.State.Preview) TextButton(onClick = dismiss) {
+                    Text(stringResource(android.R.string.cancel))
+                }
+            }
+        )
     }
 
     private fun LazyListScope.horizontalDivider() = item { HorizontalDivider() }

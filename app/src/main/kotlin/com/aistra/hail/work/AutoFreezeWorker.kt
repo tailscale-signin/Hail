@@ -1,36 +1,32 @@
 package com.aistra.hail.work
 
 import android.content.Context
-import androidx.work.Worker
+import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.aistra.hail.HailApp.Companion.app
-import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.HailData
 import com.aistra.hail.services.AutoFreezeService
 import com.aistra.hail.utils.HSystem
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-class AutoFreezeWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
-    override fun doWork(): Result {
-        if ((inputData.getBoolean(HailData.ACTION_LOCK, true)
-                    && HSystem.isInteractive(applicationContext))
-            || isSkipWhileCharging(applicationContext)
-        ) return Result.success() // Not stopping the AutoFreezeService here. The worker will run at some point. Then we'll stop the Service
-        val checkedList = HailData.checkedList.filter { !isSkipApp(applicationContext, it) }
-        val result = AppManager.setListFrozen(true, *checkedList.toTypedArray())
-        return if (result == null) {
-            Result.failure()
-        } else {
-            app.setAutoFreezeService()
-            Result.success()
+class AutoFreezeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        val context = applicationContext
+        val screenOff = inputData.getBoolean(HailData.ACTION_LOCK, true)
+        if ((screenOff && (!HailData.autoFreezeAfterLock || HSystem.isInteractive(context))) ||
+            (HailData.skipWhileCharging && HSystem.isCharging(context))) return@withContext Result.success()
+        val foreground = if (HailData.skipForegroundApp) HSystem.foregroundPackage(context)
+            ?: return@withContext Result.success() else null
+        val notifying = if (HailData.skipNotifyingApp) AutoFreezeService.notifyingPackages()
+            ?: return@withContext Result.success() else emptySet()
+        val packages = withContext(Dispatchers.Main.immediate) {
+            HailData.checkedList.filterNot { it.whitelisted || it.packageName == foreground || it.packageName in notifying }
+                .map { it.packageName }
         }
+        val result = AppManager.changeFrozen(packages, true)
+        app.setAutoFreezeService()
+        if (result.failed.isEmpty()) Result.success() else Result.failure()
     }
-
-    private fun isSkipWhileCharging(context: Context): Boolean =
-        HailData.skipWhileCharging && HSystem.isCharging(context)
-
-    private fun isSkipApp(context: Context, appInfo: AppInfo): Boolean =
-        AppManager.isAppFrozen(appInfo.packageName) || (HailData.skipForegroundApp && HSystem.isForegroundApp(
-            context, appInfo.packageName
-        )) || (HailData.skipNotifyingApp && AutoFreezeService.instance.activeNotifications.any { it.packageName == appInfo.packageName }) || appInfo.whitelisted
 }

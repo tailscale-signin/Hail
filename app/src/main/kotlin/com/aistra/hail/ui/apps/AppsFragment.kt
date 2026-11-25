@@ -11,6 +11,7 @@ import androidx.appcompat.widget.SearchView
 import androidx.core.view.MenuHost
 import androidx.core.view.MenuProvider
 import androidx.fragment.app.viewModels
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
@@ -41,11 +42,6 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     private val binding get() = _binding!!
     private lateinit var appsAdapter: AppsAdapter
 
-    // Prevent the same data from being filtered twice in `onCreateView`
-    private var lastAppsHash: Int = 0
-    private lateinit var lastQuery: String
-    private val isAppsChanged get() = model.apps.value.hashCode() != lastAppsHash
-    private val isQueryChanged get() = model.query.value != lastQuery
     private var contextMenuInfo: ContextMenu.ContextMenuInfo? = null
 
 
@@ -102,24 +98,15 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
         model.isRefreshing.observe(viewLifecycleOwner) {
             binding.refresh.isRefreshing = it
         }
-        model.apps.apply {
-            lastAppsHash = value.hashCode()
-            observe(viewLifecycleOwner) {
-                if (isAppsChanged) updateDisplayAppList()
-                lastAppsHash = it.hashCode()
-            }
-        }
-        model.query.apply {
-            lastQuery = value ?: ""
-            observe(viewLifecycleOwner) {
-                if (isQueryChanged) updateDisplayAppList()
-                lastQuery = it
-            }
-        }
         model.displayApps.observe(viewLifecycleOwner) {
             appsAdapter.submitList(it)
         }
 
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                AppManager.changes.collect { updateAppList() }
+            }
+        }
         return binding.root
     }
 
@@ -201,6 +188,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
         if (isChecked) HailData.addCheckedApp(packageName)
         else HailData.removeCheckedApp(packageName)
         buttonView.isChecked = HailData.isChecked(packageName)
+        model.updateDisplayAppList()
     }
 
     override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {
@@ -212,7 +200,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
         }
         searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
             override fun onQueryTextChange(newText: String): Boolean {
-                model.postQuery(newText, if (newText.isEmpty()) 0L else 300L)
+                model.postQuery(newText, if (newText.isEmpty()) 0L else 150L)
                 return true
             }
 
@@ -287,9 +275,14 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     private fun updateAppList() = model.updateAppList()
     private fun updateDisplayAppList() = model.updateDisplayAppList()
 
-    override fun onDestroy() {
-        appsAdapter.onDestroy()
-        super.onDestroy()
+    override fun onResume() {
+        super.onResume()
+        updateAppList()
+    }
+
+    override fun onDestroyView() {
+        binding.recyclerView.adapter = null
         _binding = null
+        super.onDestroyView()
     }
 }

@@ -14,6 +14,10 @@ import com.aistra.hail.app.HailData
 import com.aistra.hail.services.AutoFreezeService
 import com.aistra.hail.utils.HDhizuku
 import com.aistra.hail.utils.HTarget
+import com.aistra.hail.utils.HPackages
+import com.aistra.hail.utils.HShortcuts
+import com.aistra.hail.utils.HLog
+import kotlinx.coroutines.*
 
 class HailApp : Application() {
     override fun onCreate() {
@@ -24,26 +28,58 @@ class HailApp : Application() {
         if (HailData.workingMode.startsWith(HailData.DHIZUKU)) HDhizuku.init()
     }
 
-    fun setAutoFreezeService(autoFreezeAfterLock: Boolean = HailData.autoFreezeAfterLock, context: Context = app) {
-        val start = autoFreezeAfterLock && HailData.checkedList.any {
-            it.packageName != packageName && it.applicationInfo != null && !AppManager.isAppFrozen(it.packageName) && !it.whitelisted
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var serviceUpdate: Job? = null
+    private var lastServiceState: Pair<Boolean, Boolean>? = null
+
+    fun recordLaunch(pkg: String) {
+        appScope.launch(Dispatchers.IO) {
+            runCatching { HShortcuts.addDynamicShortcut(pkg) }.onFailure { HLog.e(it) }
         }
-        val intent = Intent(app, AutoFreezeService::class.java)
-        if (start) {
-            setAutoFreezeServiceEnabled(true)
-            ContextCompat.startForegroundService(context, intent)
-        } else {
-            stopService(intent)
-            setAutoFreezeServiceEnabled(false)
+        setAutoFreezeService()
+    }
+
+    fun setAutoFreezeService(autoFreezeAfterLock: Boolean = HailData.autoFreezeAfterLock, context: Context = app) {
+        appScope.launch {
+            serviceUpdate?.cancel()
+            serviceUpdate = launch {
+                val candidates = if (autoFreezeAfterLock) HailData.checkedList.filter {
+                    !it.whitelisted && it.packageName != packageName
+                }.map { it.packageName } else emptyList()
+                val whitelisted = autoFreezeAfterLock && HailData.checkedList.any { it.whitelisted }
+                val mode = HailData.workingMode
+                val start = candidates.isNotEmpty() && withContext(Dispatchers.IO) {
+                    candidates.any { pkg -> HPackages.getApplicationInfoOrNull(pkg)?.let {
+                        !AppManager.isAppFrozen(it, mode)
+                    } == true }
+                }
+                val desired = start to (start && whitelisted)
+                if (desired == lastServiceState) return@launch
+                val intent = Intent(app, AutoFreezeService::class.java)
+                try {
+                    if (start) {
+                        setAutoFreezeServiceEnabled(true)
+                        ContextCompat.startForegroundService(context, intent)
+                    } else {
+                        stopService(intent)
+                        setAutoFreezeServiceEnabled(false)
+                    }
+                    lastServiceState = desired
+                } catch (e: RuntimeException) {
+                    lastServiceState = null
+                    HLog.e(e)
+                }
+            }
         }
     }
 
     fun setAutoFreezeServiceEnabled(enabled: Boolean) {
-        packageManager.setComponentEnabledSetting(
-            ComponentName(app, AutoFreezeService::class.java),
-            if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-            PackageManager.DONT_KILL_APP
-        )
+        val component = ComponentName(app, AutoFreezeService::class.java)
+        val desired = if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        if (packageManager.getComponentEnabledSetting(component) != desired) {
+            packageManager.setComponentEnabledSetting(component, desired, PackageManager.DONT_KILL_APP)
+            lastServiceState = null
+        }
     }
 
     fun setAppTheme(theme: String) {

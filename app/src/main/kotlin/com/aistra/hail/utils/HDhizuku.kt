@@ -42,14 +42,14 @@ object HDhizuku {
         ).invoke(dpm, null, packageName, hidden) as Boolean
     }.getOrDefault(false)
 
-    fun setAppSuspended(packageName: String, suspended: Boolean): Boolean = runCatching {
-        HTarget.O && (dpm::class.java.getMethod(
-            "setPackagesSuspended",
-            ComponentName::class.java,
-            Array<String>::class.java,
-            Boolean::class.java
-        ).invoke(dpm, null, arrayOf(packageName), suspended) as Array<*>).isEmpty()
-    }.getOrDefault(false)
+    fun setSuspended(packages: List<String>, suspended: Boolean): Set<String> = try {
+        if (HTarget.O) {
+            packages.toSet() - dpm.setPackagesSuspended(null, packages.toTypedArray(), suspended).toSet()
+        } else emptySet()
+    } catch (e: RuntimeException) {
+        HLog.e(e)
+        emptySet()
+    }
 
     @SuppressLint("PrivateApi")
     fun uninstallApp(packageName: String): Boolean = runCatching {

@@ -7,30 +7,27 @@ import android.widget.CompoundButton
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import com.aistra.hail.app.AppManager
-import com.aistra.hail.app.HailData
 import com.aistra.hail.databinding.ItemAppsBinding
 import com.aistra.hail.utils.AppIconCache
 import com.aistra.hail.utils.HPackages
 import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.Job
 
-class AppsAdapter : ListAdapter<ApplicationInfo, AppsAdapter.ViewHolder>(DIFF) {
+class AppsAdapter : ListAdapter<InstalledRow, AppsAdapter.ViewHolder>(DIFF) {
 
     companion object {
-        val DIFF = object : DiffUtil.ItemCallback<ApplicationInfo>() {
+        val DIFF = object : DiffUtil.ItemCallback<InstalledRow>() {
             override fun areItemsTheSame(
-                oldItem: ApplicationInfo, newItem: ApplicationInfo
-            ): Boolean = oldItem.packageName == newItem.packageName
+                oldItem: InstalledRow, newItem: InstalledRow
+            ): Boolean = oldItem.info.packageName == newItem.info.packageName
 
-            override fun areContentsTheSame(oldItem: ApplicationInfo, newItem: ApplicationInfo): Boolean =
-                oldItem.flags and ApplicationInfo.FLAG_INSTALLED == newItem.flags and ApplicationInfo.FLAG_INSTALLED
+            override fun areContentsTheSame(oldItem: InstalledRow, newItem: InstalledRow): Boolean =
+                oldItem.copy(info = newItem.info) == newItem
         }
     }
 
     lateinit var onItemClickListener: OnItemClickListener
     lateinit var onItemCheckedChangeListener: OnItemCheckedChangeListener
-    private var loadIconJob: Job? = null
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder = ViewHolder(
         ItemAppsBinding.inflate(LayoutInflater.from(parent.context), parent, false)
@@ -41,11 +38,13 @@ class AppsAdapter : ListAdapter<ApplicationInfo, AppsAdapter.ViewHolder>(DIFF) {
         holder.bindInfo(info)
     }
 
-    fun onDestroy() {
-        if (loadIconJob?.isActive == true) loadIconJob?.cancel()
+    override fun onViewRecycled(holder: ViewHolder) {
+        holder.loadIconJob?.cancel()
+        super.onViewRecycled(holder)
     }
 
     inner class ViewHolder(private val binding: ItemAppsBinding) : RecyclerView.ViewHolder(binding.root) {
+        var loadIconJob: Job? = null
         lateinit var info: ApplicationInfo
         private val pkg get() = info.packageName
 
@@ -64,21 +63,22 @@ class AppsAdapter : ListAdapter<ApplicationInfo, AppsAdapter.ViewHolder>(DIFF) {
             }
         }
 
-        fun bindInfo(info: ApplicationInfo) {
+        fun bindInfo(row: InstalledRow) {
             updating = true
-            this.info = info
-            val frozen = AppManager.isAppFrozen(pkg)
+            info = row.info
+            loadIconJob?.cancel()
+            val frozen = row.frozen
 
             binding.appIcon.apply {
                 loadIconJob = AppIconCache.loadIconBitmapAsync(
-                    context, info, HPackages.myUserId, this, HailData.grayscaleIcon && frozen
+                    context, info, HPackages.myUserId, this, row.grayscale && frozen
                 )
             }
             binding.appName.apply {
-                val name = info.loadLabel(context.packageManager)
-                text = if (!HailData.grayscaleIcon && frozen) "❄️$name" else name
-                isEnabled = !HailData.grayscaleIcon || !frozen
-                if (HPackages.isAppUninstalled(pkg)) setTextColor(
+                val name = row.label
+                text = if (!row.grayscale && frozen) "❄️$name" else name
+                isEnabled = !row.grayscale || !frozen
+                if (!row.installed) setTextColor(
                     MaterialColors.getColor(
                         this, androidx.appcompat.R.attr.colorError
                     )
@@ -87,9 +87,9 @@ class AppsAdapter : ListAdapter<ApplicationInfo, AppsAdapter.ViewHolder>(DIFF) {
             }
             binding.appDesc.apply {
                 text = pkg
-                isEnabled = !HailData.grayscaleIcon || !frozen
+                isEnabled = !row.grayscale || !frozen
             }
-            binding.appStar.isChecked = HailData.isChecked(pkg)
+            binding.appStar.isChecked = row.checked
             updating = false
         }
     }

@@ -46,9 +46,9 @@ object HPackages {
 
     fun isAppDisabled(packageName: String): Boolean = getApplicationInfoOrNull(packageName)?.enabled?.not() ?: false
 
-    fun isAppHidden(packageName: String): Boolean = getApplicationInfoOrNull(packageName)?.let {
-        (ApplicationInfo::class.java.getField("privateFlags").get(it) as Int) and 1 == 1
-    } ?: false
+    private val privateFlags by lazy { runCatching { ApplicationInfo::class.java.getField("privateFlags") }.getOrNull() }
+    fun isHidden(info: ApplicationInfo): Boolean = runCatching { (privateFlags?.getInt(info) ?: 0) and 1 != 0 }.getOrDefault(false)
+    fun isAppHidden(packageName: String) = getApplicationInfoOrNull(packageName)?.let(::isHidden) == true
 
     fun isAppStopped(packageName: String): Boolean =
         getApplicationInfoOrNull(packageName)?.run { flags and ApplicationInfo.FLAG_STOPPED == ApplicationInfo.FLAG_STOPPED }
