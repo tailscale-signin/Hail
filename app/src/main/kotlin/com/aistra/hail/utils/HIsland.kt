@@ -76,9 +76,6 @@ object HIsland {
         app.sendOrderedBroadcast(
             intent, null, object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
-                    if (resultCode != Activity.RESULT_OK) {
-                        HLog.i("HIsland", resultData)
-                    }
                     trace?.event("island_response", packageName, "resultCode" to resultCode)
                     result.complete(resultCode == Activity.RESULT_OK)
                 }

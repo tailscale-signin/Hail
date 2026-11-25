@@ -8,6 +8,7 @@ import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
+import com.aistra.hail.ui.api.InternalActionActivity
 import com.aistra.hail.R
 import com.aistra.hail.app.HailApi
 import com.aistra.hail.app.HailData
@@ -20,17 +21,18 @@ class AutoFreezeService : NotificationListenerService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
         val freezeAuto = PendingIntent.getActivity(
-            applicationContext, 0, Intent(HailApi.ACTION_FREEZE_AUTO).putExtra(HailApi.EXTRA_ORIGIN, HailApi.NOTIFICATION), PendingIntent.FLAG_IMMUTABLE
+            applicationContext, 0, Intent(HailApi.ACTION_FREEZE_AUTO).setClass(this, InternalActionActivity::class.java).putExtra(HailApi.EXTRA_ORIGIN, HailApi.NOTIFICATION), PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(this, channelID)
             .setContentTitle(getString(R.string.auto_freeze_notification_title))
             .setSmallIcon(R.drawable.ic_round_frozen)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .addAction(R.drawable.ic_round_frozen, getString(R.string.auto_freeze), freezeAuto)
         if (HailData.checkedList.any { it.whitelisted }) {
             val freezeNonWhitelisted = PendingIntent.getActivity(
                 applicationContext,
                 0,
-                Intent(HailApi.ACTION_FREEZE_NON_WHITELISTED).putExtra(HailApi.EXTRA_ORIGIN, HailApi.NOTIFICATION),
+                Intent(HailApi.ACTION_FREEZE_NON_WHITELISTED).setClass(this, InternalActionActivity::class.java).putExtra(HailApi.EXTRA_ORIGIN, HailApi.NOTIFICATION),
                 PendingIntent.FLAG_IMMUTABLE
             )
             notification.addAction(

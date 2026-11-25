@@ -46,9 +46,17 @@ action.
 Suspend only prevents the user from interacting with the app, it does **NOT** prevent the app from running in the
 background.
 
+### Privacy when disabling an app
+
+For a reversible freeze on an unrooted phone, select **Settings → Working mode → Shizuku — Disable** and authorize Hail in Shizuku. Android records a user disable in the current profile. A root-backed disable can use the full disabled state. After an accepted disable, Hail reads Android’s disabled and stopped flags. When the stop flag is clear, Hail requests a force-stop and checks again. A repeated freeze also checks these flags. **Package status** shows the observed state and offers **Verify stop** when available.
+
+Android keeps the installed data, accounts and information already sent to a service. Other profiles, privileged system components and previously shared data have separate lifecycles. A force-stop alone can be cleared by launching the app. For hiding and suspension, the selected owner or provider enforces that mode’s Android policy.
+
+Hail excludes its own managed list and settings from automatic backup and device transfer. Diagnostic recording is off by default. When enabled, **Settings → Debug mode** can export or erase local events. The exported log contains package names and device details. Launcher suggestions for recently opened apps are opt-in. Manually pinned shortcuts remain visible in the launcher.
+
 ## Back up and restore
 
-Open **Settings → Backup and restore → Back up to file** to save your managed apps, tags, pins, whitelist, portable preferences and known frozen states in a JSON file. **Restore from file** previews the app and tag counts before replacing your configuration.
+Open **Settings → Backup and restore → Back up to file** to save your managed apps, tags, pins, whitelist, portable preferences and known frozen states in a readable JSON file at the destination you choose. **Restore from file** previews the app and tag counts before replacing your configuration.
 
 Select **Also reapply saved frozen states** to change apps on this device using its current working mode. Hail reports changes, apps already in the requested state, missing apps and failures. Android permissions, the working mode and biometric login belong to each device.
 
@@ -171,6 +179,8 @@ rename or just delete it.
 **None of my business :(**
 
 ## API
+
+External actions and `hail://` links show the requested operation and target for confirmation. When biometric login is enabled, actions also require device authentication. New Android 8+ launcher shortcuts, notification buttons and the Quick Settings tile use a private Hail activity. Older pinned shortcuts use the public confirmation screen.
 
 ```shell
 adb shell am start -a action -e key value

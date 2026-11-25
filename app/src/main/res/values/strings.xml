@@ -223,4 +223,20 @@
     <string name="package_until_used_shell">Android restricts ADB-backed Shizuku from changing this temporary state. Open App info to see the controls available on this device.</string>
     <string name="freeze_counts_inactive">%1$d changed · %2$d already frozen · %3$d already inactive in this profile · %4$d unknown · %5$d failed</string>
     <string name="unfreeze_counts_not_installed">%1$d changed · %2$d already in that state · %3$d not installed in this profile · %4$d unknown · %5$d failed</string>
+    <string name="disable_confirmed">Android reports this app disabled and stopped in this profile.</string>
+    <string name="disable_unconfirmed">Hail could not confirm that this app is both disabled and stopped in this profile.</string>
+    <string name="verify_stop">Verify stop</string>
+    <string name="privacy_disable">Disable checks Android’s disabled and stopped flags for this profile. The app keeps its stored data.</string>
+    <string name="privacy_hide">Hide makes the app unavailable in this profile and keeps its stored data.</string>
+    <string name="privacy_suspend">Suspend limits activities and notifications. Background processing can still be possible.</string>
+    <string name="privacy_stop">Force-stop lasts until the app is started again.</string>
+    <string name="external_action">Allow this Hail action?</string>
+    <string name="request_tag">Tag: %1$s</string>
+    <string name="also_unfreeze_tag">Also unfreeze every app in tag %1$s</string>
+    <string name="unlock_unavailable">Set up a device screen lock or a supported biometric first.</string>
+    <string name="recent_shortcuts">Show recently launched apps in launcher shortcuts</string>
+    <string name="erase_debug_log">Erase recorded events</string>
+    <string name="erase_debug_confirm">Erase the decision log stored by Hail? If recording is on, new events will continue to be recorded.</string>
+    <string name="debug_log_cleared">Recorded events erased.</string>
+    <string name="debug_clear_failed">Could not erase the decision log.</string>
 </resources>

@@ -4,10 +4,8 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 
 object HShell {
-    private fun getCurrentUserId(): Int = execSU("am get-current-user").second?.trim()?.toIntOrNull() ?: 0
-
     private val userArg: String
-        get() = "--user ${getCurrentUserId()}"
+        get() = "--user ${HPackages.myUserId}"
 
     fun execute(command: String, root: Boolean): Pair<Int, String?> = runCatching {
         ProcessBuilder(if (root) "su" else "sh").redirectErrorStream(true).start().run {

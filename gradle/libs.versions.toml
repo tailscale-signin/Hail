@@ -6,7 +6,6 @@ kotlin = "2.4.21"
 appcompat = "1.8.0"
 appiconloader = "1.5.0"
 biometric = "1.4.0-alpha07"
-commonsText = "1.15.0"
 composeBom = "2026.09.00"
 composePreference = "1.1.1"
 constraintlayout = "2.2.2"
@@ -47,7 +46,6 @@ androidx-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview
 androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "workRuntimeKtx" }
 androidx-swiperefreshlayout = { module = "androidx.swiperefreshlayout:swiperefreshlayout", version.ref = "swiperefreshlayout" }
 appiconloader = { module = "me.zhanghai.android.appiconloader:appiconloader", version.ref = "appiconloader" }
-commons-text = { module = "org.apache.commons:commons-text", version.ref = "commonsText" }
 compose-preference = { module = "me.zhanghai.compose.preference:library", version.ref = "composePreference" }
 dhizuku-api = { module = "io.github.iamr0s:Dhizuku-API", version.ref = "dhizukuApi" }
 hiddenapibypass = { module = "org.lsposed.hiddenapibypass:hiddenapibypass", version.ref = "hiddenapibypass" }

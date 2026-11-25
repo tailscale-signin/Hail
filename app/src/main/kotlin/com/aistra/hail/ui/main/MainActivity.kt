@@ -1,13 +1,10 @@
 package com.aistra.hail.ui.main
 
+import com.aistra.hail.ui.DeviceUnlock
+import com.aistra.hail.ui.protectContent
 import android.os.Bundle
 import android.view.Menu
 import androidx.appcompat.app.AppCompatActivity
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
-import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
-import androidx.biometric.BiometricPrompt
-import androidx.core.content.ContextCompat
 import androidx.core.view.MenuCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.isVisible
@@ -24,40 +21,47 @@ import com.aistra.hail.extensions.*
 import com.aistra.hail.utils.HPolicy
 import com.aistra.hail.utils.HUI
 import com.google.android.material.appbar.AppBarLayout
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.aistra.hail.ui.PrivateDialogBuilder
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 
 class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedListener {
     lateinit var fab: ExtendedFloatingActionButton
     lateinit var appbar: AppBarLayout
 
+    private val unlock = DeviceUnlock(this)
+    private lateinit var binding: ActivityMainBinding
+    private var authenticated = false
+    private var authenticating = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        window.protectContent()
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        val binding = initView()
-        if (!HailData.biometricLogin || BiometricManager.from(this)
-                .canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL) != BiometricManager.BIOMETRIC_SUCCESS
-        ) return
-        binding.root.isVisible = false
-        val biometricPrompt = BiometricPrompt(
-            this,
-            ContextCompat.getMainExecutor(this),
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    super.onAuthenticationError(errorCode, errString)
-                    HUI.showToast(errString)
-                    finishAndRemoveTask()
-                }
+        binding = initView()
+        binding.root.isVisible = !HailData.biometricLogin
+    }
 
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    super.onAuthenticationSucceeded(result)
-                    binding.root.isVisible = true
-                }
-            })
-        val promptInfo = BiometricPrompt.PromptInfo.Builder().setTitle(getString(R.string.action_biometric))
-            .setSubtitle(getString(R.string.msg_biometric)).setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
-            .build()
-        biometricPrompt.authenticate(promptInfo)
+    override fun onStart() {
+        super.onStart()
+        if (!HailData.biometricLogin || authenticated) {
+            binding.root.isVisible = true
+        } else if (!authenticating) {
+            binding.root.isVisible = false
+            authenticating = true
+            unlock.request { allowed ->
+                authenticating = false
+                authenticated = allowed
+                if (allowed) binding.root.isVisible = true else finishAndRemoveTask()
+            }
+        }
+    }
+
+    override fun onStop() {
+        if (HailData.biometricLogin) {
+            binding.root.isVisible = false
+            authenticated = false
+        }
+        super.onStop()
     }
 
     private fun initView() = ActivityMainBinding.inflate(layoutInflater).apply {
@@ -92,7 +96,7 @@ class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedList
     }
 
     fun ownerRemoveDialog() {
-        MaterialAlertDialogBuilder(this).setTitle(R.string.title_remove_owner).setMessage(R.string.msg_remove_owner)
+        PrivateDialogBuilder(this).setTitle(R.string.title_remove_owner).setMessage(R.string.msg_remove_owner)
             .setPositiveButton(R.string.action_continue) { _, _ ->
                 HPolicy.setOrganizationName()
                 HPolicy.removeDeviceOwner()

@@ -10,6 +10,8 @@
     <uses-permission
             android:name="android.permission.QUERY_ALL_PACKAGES"
             tools:ignore="QueryAllPackagesPermission"/>
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS"/>
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove"/>
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
@@ -31,7 +33,9 @@
 
     <application
             android:name=".HailApp"
-            android:allowBackup="true"
+            android:allowBackup="false"
+            android:fullBackupContent="false"
+            android:dataExtractionRules="@xml/data_extraction_rules"
             android:enableOnBackInvokedCallback="true"
             android:icon="@mipmap/ic_launcher"
             android:label="@string/app_name"
@@ -83,6 +87,13 @@
                 <data android:scheme="hail"/>
             </intent-filter>
         </activity>
+
+        <activity
+                android:name=".ui.api.InternalActionActivity"
+                android:excludeFromRecents="true"
+                android:exported="false"
+                android:launchMode="singleInstance"
+                android:theme="@style/Theme.Hail.Translucent"/>
 
         <provider
                 android:name="rikka.shizuku.ShizukuProvider"

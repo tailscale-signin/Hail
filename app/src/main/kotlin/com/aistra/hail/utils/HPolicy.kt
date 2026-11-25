@@ -52,12 +52,6 @@ object HPolicy {
         else -> false
     }
 
-    fun enableBackupService() {
-        if (isDeviceOwnerActive && HTarget.O && !dpm.isBackupServiceEnabled(admin)) dpm.setBackupServiceEnabled(
-            admin, true
-        )
-    }
-
     fun setOrganizationName(name: String? = null) {
         if (isDeviceOwnerActive && HTarget.O) dpm.setOrganizationName(admin, name)
     }

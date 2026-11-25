@@ -6,13 +6,13 @@ object NineKeySearch {
     fun search(query: String?, vararg strings: String?): Boolean =
         query.isNullOrEmpty() || strings.any {
             !it.isNullOrEmpty() && FuzzySearch.search(
-                toNineKey(toPinyin(it)),
+                toNineKey(it),
                 query
             )
         }
 
     private fun toPinyin(raw: String): String = buildString {
-        raw.map {
+        raw.forEach {
             when (it) {
                 in '0'..'9' -> append(it)
                 in 'a'..'z' -> append(it)

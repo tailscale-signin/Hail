@@ -69,6 +69,10 @@ object AppManager {
                     trace?.event("transition", name, "reason" to "Privilege allows full disable of a previously user-disabled package")
                     false
                 }
+                // A manifest default is not a durable, explicit user disable.
+                setting == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT && targetSetting in listOf(
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+                ) -> false
                 else -> !pkg.canDisable(setting)
             }
         } else pkg.info?.let { isAppFrozen(it, mode) } == true
@@ -121,7 +125,7 @@ object AppManager {
                         val cause = (error as? InvocationTargetException)?.targetException ?: error
                         failureReasons[pkg] = (cause.message?.lineSequence()?.firstOrNull() ?: cause.javaClass.simpleName).take(350)
                     }
-                    val result = FreezeBatch.run(packages, BuildConfig.APPLICATION_ID, frozen,
+                    val applied = FreezeBatch.run(packages, BuildConfig.APPLICATION_ID, frozen,
                         state = { pkg ->
                             val record = if (packages.size >= 8) lookup.fromInventory(pkg, forChange = true) else lookup.find(pkg)
                             if (shellDisable &&
@@ -161,14 +165,26 @@ object AppManager {
                             }
                             succeeded
                         })
-                    if (result.changed.isNotEmpty()) {
+                    val unconfirmed = if (frozen && mode.endsWith(HailData.DISABLE)) {
+                        lookup.unconfirmedDisabled(applied.changed + applied.unchanged)
+                    } else emptySet()
+                    val partialMessage = if (unconfirmed.isEmpty()) null else app.getString(R.string.disable_unconfirmed)
+                    for (pkg in unconfirmed) failureReasons[pkg] = requireNotNull(partialMessage)
+                    val result = if (unconfirmed.isEmpty()) applied else applied.copy(
+                        changed = applied.changed - unconfirmed,
+                        unchanged = applied.unchanged - unconfirmed,
+                        failed = applied.failed + unconfirmed
+                    )
+                    if (applied.changed.isNotEmpty() || unconfirmed.isNotEmpty()) {
                         changed.tryEmit(Unit)
                         app.setAutoFreezeService()
                     }
                     val single = result.changed.singleOrNull() ?: result.unchanged.singleOrNull()
                     val label = single?.let { pkg -> runCatching { infoByPackage[pkg]?.loadLabel(app.packageManager)?.toString() }.getOrNull() }
                     val failed = result.failed.singleOrNull()
-                    val failureMessage = if (failed != null && mode.endsWith(HailData.DISABLE) &&
+                    val failureMessage = if (failed != null && failed in unconfirmed && result.changed.isEmpty() &&
+                        result.unchanged.isEmpty() && result.missing.isEmpty() && result.notInstalled.isEmpty()) partialMessage
+                    else if (failed != null && mode.endsWith(HailData.DISABLE) &&
                         result.changed.isEmpty() && result.unchanged.isEmpty() && result.missing.isEmpty() && result.notInstalled.isEmpty()) {
                         val info = infoByPackage[failed] ?: HPackages.getApplicationInfoOrNull(failed)
                         val androidError = failureReasons[failed]

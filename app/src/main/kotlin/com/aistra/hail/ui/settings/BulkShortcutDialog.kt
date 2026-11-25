@@ -24,7 +24,7 @@ import com.aistra.hail.app.HailData
 import com.aistra.hail.utils.HLog
 import com.aistra.hail.utils.HShortcuts
 import com.aistra.hail.utils.HTarget
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.aistra.hail.ui.PrivateDialogBuilder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,7 +70,7 @@ class BulkShortcutDialog : DialogFragment() {
     }
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog =
-        MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.add_all_app_shortcuts)
+        PrivateDialogBuilder(requireContext()).setTitle(R.string.add_all_app_shortcuts)
             .setMessage(" ").setPositiveButton(android.R.string.ok, null)
             .setNegativeButton(android.R.string.cancel, null).setNeutralButton(R.string.action_skip, null).create()
 

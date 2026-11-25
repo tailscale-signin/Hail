@@ -12,7 +12,7 @@
             android:text="@string/enable_app" android:visibility="gone" />
         <TextView android:id="@+id/report" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/padding_small" android:textIsSelectable="true"
-            android:textAppearance="@style/TextAppearance.Material3.BodyMedium" />
+            android:textAppearance="@style/TextAppearance.Hail.BodyMedium" />
         <com.google.android.material.button.MaterialButton android:id="@+id/remove_from_home"
             style="?android:attr/borderlessButtonStyle" android:layout_width="wrap_content" android:layout_height="wrap_content"
             android:text="@string/action_remove_home" android:visibility="gone" />

@@ -19,7 +19,13 @@ data class InstalledRow(val info: ApplicationInfo, val label: String, val frozen
 class AppsViewModel(application: Application) : AndroidViewModel(application) {
     val isRefreshing = MutableLiveData(false)
     val displayApps = MutableLiveData<List<InstalledRow>>()
-    private var applications: Collection<HPackages.UserPackage> = emptyList()
+    // Entries live for a single package refresh. Searching and sorting reuse the Android metadata.
+    private class Entry(val record: HPackages.UserPackage, val info: ApplicationInfo, pm: android.content.pm.PackageManager) {
+        val label by lazy { info.loadLabel(pm).toString() }
+        val packageInfo by lazy { HPackages.getUnhiddenPackageInfoOrNull(info.packageName) }
+    }
+
+    private var applications: List<Entry> = emptyList()
     private var query = ""
     private var loadJob: Job? = null
     private var filterJob: Job? = null
@@ -47,7 +53,12 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
         filterJob?.cancel()
         isRefreshing.value = true
         loadJob = viewModelScope.launch {
-            applications = withContext(Dispatchers.IO) { PackageLookup(HailData.workingMode).all().values }
+            val pm = getApplication<HailApp>().packageManager
+            applications = withContext(Dispatchers.IO) {
+                PackageLookup(HailData.workingMode).all().values.mapNotNull { record ->
+                    record.info?.let { Entry(record, it, pm) }
+                }
+            }
             updateDisplayAppList()
         }
     }
@@ -56,7 +67,6 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
         filterJob?.cancel()
         val source = applications
         val search = query
-        val pm = getApplication<HailApp>().packageManager
         val sort = HailData.sortBy
         val mode = HailData.workingMode
         val users = HailData.filterUserApps
@@ -67,20 +77,21 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
         val nineKey = HailData.nineKeySearch
         filterJob = viewModelScope.launch {
             val filtered = withContext(Dispatchers.IO) {
-                val rows = source.mapNotNull { record ->
+                val rows = source.mapNotNull { entry ->
                     ensureActive()
-                    val info = record.info ?: return@mapNotNull null
+                    val info = entry.info
+                    val record = entry.record
                     val pkg = info.packageName
                     if (!(if (HPackages.isSystemApp(info)) system else users)) return@mapNotNull null
                     val frozen = AppManager.state(record, mode) == AppInfo.State.FROZEN
                     if (!(if (frozen) frozenApps else unfrozenApps)) return@mapNotNull null
-                    val label = info.loadLabel(pm).toString()
+                    val label = entry.label
                     if (search.isNotEmpty() && !(nineKey && NineKeySearch.search(search, pkg, label))
                         && !FuzzySearch.search(pkg, search) && !FuzzySearch.search(label, search)
                         && !PinyinSearch.searchPinyinAll(label, search)) return@mapNotNull null
                     val timestamp = when (sort) {
-                        HailData.SORT_INSTALL -> HPackages.getUnhiddenPackageInfoOrNull(pkg)?.firstInstallTime
-                        HailData.SORT_UPDATE -> HPackages.getUnhiddenPackageInfoOrNull(pkg)?.lastUpdateTime
+                        HailData.SORT_INSTALL -> entry.packageInfo?.firstInstallTime
+                        HailData.SORT_UPDATE -> entry.packageInfo?.lastUpdateTime
                         else -> null
                     }
                     InstalledRow(info, label, frozen, record.installed,

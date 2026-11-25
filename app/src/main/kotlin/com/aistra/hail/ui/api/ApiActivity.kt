@@ -3,9 +3,13 @@ package com.aistra.hail.ui.api
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager.NameNotFoundException
-import android.net.Uri
+import androidx.fragment.app.FragmentActivity
+import com.aistra.hail.ui.DeviceUnlock
+import com.aistra.hail.ui.PrivateDialogBuilder
+import com.aistra.hail.ui.protectContent
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
@@ -39,11 +43,17 @@ import com.aistra.hail.ui.theme.AppTheme
 import com.aistra.hail.utils.*
 import com.aistra.hail.work.HWork.setAutoFreeze
 
-class ApiActivity : ComponentActivity() {
+// Only Android can dispatch to this unexported component on behalf of Hail.
+class InternalActionActivity : ApiActivity()
+
+open class ApiActivity : FragmentActivity() {
+    private val unlock = DeviceUnlock(this)
+    private var requestSource = "api"
     private var actionJob: Job? = null
     private var lastRequest = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        window.protectContent()
         super.onCreate(savedInstanceState)
         dispatch(intent)
     }
@@ -53,22 +63,43 @@ class ApiActivity : ComponentActivity() {
         dispatch(intent)
     }
 
-    private val requestSource: String get() = when (intent.getStringExtra(HailApi.EXTRA_ORIGIN)) {
-        HailApi.SHORTCUT -> HailApi.SHORTCUT
-        HailApi.TILE -> HailApi.TILE
-        HailApi.NOTIFICATION -> HailApi.NOTIFICATION
-        else -> if (intent.action == Intent.ACTION_VIEW) "hail_link" else "api"
+    private suspend fun unlocked() = !HailData.biometricLogin || suspendCancellableCoroutine { result ->
+        unlock.request { if (result.isActive) result.resume(it) }
     }
 
     private fun dispatch(request: Intent) = enqueue {
-        setIntent(request)
+        val internal = this is InternalActionActivity
+        requestSource = when {
+            !internal -> if (request.action == Intent.ACTION_VIEW) "hail_link" else "api"
+            else -> request.getStringExtra(HailApi.EXTRA_ORIGIN) ?: "hail"
+        }
         try {
-            handleAction(request.action)
+            setContent { }
+            val action = HailApi.parse(request)
+            setIntent(action)
+            if (!unlocked()) return@enqueue true
+            if (!internal && action.action != Intent.ACTION_SHOW_APP_INFO && !confirm(action)) return@enqueue true
+            handleAction(action.action)
         } catch (e: Exception) {
             if (e !is CancellationException) DecisionLog.begin(requestSource, "dispatch")?.event("dispatch_failed", null,
                 "errorType" to e.javaClass.name)
             throw e
         }
+    }
+
+    private suspend fun confirm(request: Intent): Boolean = suspendCancellableCoroutine { result ->
+        val description = buildList {
+            add(getString(HailApi.actionLabel(request.action)))
+            request.getStringExtra(HailData.KEY_PACKAGE)?.let { add(it) }
+            request.getStringExtra(HailData.KEY_TAG)?.let {
+                add(getString(if (request.action == HailApi.ACTION_LAUNCH) R.string.also_unfreeze_tag else R.string.request_tag, it))
+            }
+        }.joinToString("\n")
+        fun answer(allow: Boolean) { if (result.isActive) result.resume(allow) }
+        val dialog = PrivateDialogBuilder(this).setTitle(R.string.external_action)
+            .setMessage(description).setPositiveButton(R.string.action_continue) { _, _ -> answer(true) }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> answer(false) }.setOnCancelListener { answer(false) }.show()
+        result.invokeOnCancellation { runOnUiThread { dialog.dismiss() } }
     }
 
     private fun enqueue(action: suspend () -> Boolean) {
@@ -96,9 +127,7 @@ class ApiActivity : ComponentActivity() {
                 return false
             }
 
-            Intent.ACTION_VIEW -> return handleSchema(intent.data)
-
-            HailApi.ACTION_LAUNCH -> launchApp(requirePackage(), runCatching { requireTagId }.getOrNull())
+            HailApi.ACTION_LAUNCH -> launchApp(requirePackage(), intent.getStringExtra(HailData.KEY_TAG)?.let { requireTagId })
             HailApi.ACTION_FREEZE -> setAppFrozen(requirePackage(), true)
             HailApi.ACTION_UNFREEZE -> setAppFrozen(requirePackage(), false)
             HailApi.ACTION_FREEZE_TAG, HailApi.ACTION_UNFREEZE_TAG -> {
@@ -116,41 +145,6 @@ class ApiActivity : ComponentActivity() {
             else -> throw IllegalArgumentException("Unknown action:\n$action")
         }
         return true
-    }
-
-    /**
-     * Handle schema actions
-     *
-     * hail://launch?package=xxx
-     * hail://freeze?package=xxx
-     * hail://unfreeze?package=xxx
-     * hail://freeze_tag?tag=xxx
-     * hail://unfreeze_tag?tag=xxx
-     * hail://freeze_all
-     * hail://unfreeze_all
-     * hail://freeze_non_whitelisted
-     * hail://freeze_auto
-     * hail://lock
-     * hail://lock_freeze
-     */
-    private suspend fun handleSchema(uri: Uri?): Boolean {
-        if (uri?.scheme != "hail") throw IllegalArgumentException("Unknown scheme:\n${uri?.scheme}")
-        return handleAction(
-            when (uri.host) {
-                "launch" -> HailApi.ACTION_LAUNCH
-                "freeze" -> HailApi.ACTION_FREEZE
-                "unfreeze" -> HailApi.ACTION_UNFREEZE
-                "freeze_tag" -> HailApi.ACTION_FREEZE_TAG
-                "unfreeze_tag" -> HailApi.ACTION_UNFREEZE_TAG
-                "freeze_all" -> HailApi.ACTION_FREEZE_ALL
-                "unfreeze_all" -> HailApi.ACTION_UNFREEZE_ALL
-                "freeze_non_whitelisted" -> HailApi.ACTION_FREEZE_NON_WHITELISTED
-                "freeze_auto" -> HailApi.ACTION_FREEZE_AUTO
-                "lock" -> HailApi.ACTION_LOCK
-                "lock_freeze" -> HailApi.ACTION_LOCK_FREEZE
-                else -> throw IllegalArgumentException("Unknown host:\n${uri.host}")
-            }
-        )
     }
 
     private fun setErrorDialog(t: Throwable) = setContent { AppTheme { ErrorDialog(t) } }
@@ -208,23 +202,10 @@ class ApiActivity : ComponentActivity() {
             }
         })
 
-    private fun requirePackage(): String {
-        val pkg = intent.run {
-            if (action == Intent.ACTION_VIEW) data?.getQueryParameter(HailData.KEY_PACKAGE)
-            else getStringExtra(
-                if (action != Intent.ACTION_SHOW_APP_INFO) HailData.KEY_PACKAGE
-                else if (HTarget.N) Intent.EXTRA_PACKAGE_NAME
-                else "android.intent.extra.PACKAGE_NAME"
-            )
-        } ?: throw IllegalArgumentException("Package must not be null")
-        return pkg
-    }
+    private fun requirePackage(): String = requireNotNull(intent.getStringExtra(HailData.KEY_PACKAGE))
 
     private val requireTagId: Int
-        get() = intent.run {
-            if (action == Intent.ACTION_VIEW) data?.getQueryParameter(HailData.KEY_TAG)
-            else getStringExtra(HailData.KEY_TAG)
-        }?.let {
+        get() = intent.getStringExtra(HailData.KEY_TAG)?.let {
             HailData.tags.find { tag -> tag.first == it }?.second
                 ?: throw IllegalStateException("Tag unavailable:\n$it")
         } ?: throw IllegalArgumentException("Tag must not be null")

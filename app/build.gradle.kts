@@ -107,7 +107,6 @@ dependencies {
     implementation(libs.dhizuku.api)
     implementation(libs.appiconloader)
     implementation(libs.compose.preference)
-    implementation(libs.commons.text)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.hiddenapibypass)
     compileOnly(libs.libxposed.api)
