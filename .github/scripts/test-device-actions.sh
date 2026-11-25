@@ -89,9 +89,16 @@ for server in shell root; do
         adb shell "$shizuku_dir/lib/x86_64/libshizuku.so"
         uid=0
     fi
-    pid="$(adb shell pidof shizuku_server | tr -d '\r')"
-    [[ $pid =~ ^[0-9]+$ ]]
-    test "$(adb shell "stat -c %u /proc/$pid" | tr -d '\r')" = "$uid"
+    actual_uid=""
+    for attempt in {1..30}; do
+        pid="$(adb shell pidof shizuku_server | tr -d '\r' || true)"
+        if [[ $pid =~ ^[0-9]+$ ]]; then
+            actual_uid="$(adb shell "cat /proc/$pid/status" | tr -d '\r' | awk '/^Uid:/ {print $2}')"
+            if [[ $actual_uid == "$uid" ]]; then break; fi
+        fi
+        sleep 1
+    done
+    test "$actual_uid" = "$uid"
     for distribution in upstream fork; do
         if adb shell pm path com.aistra.hail | tr -d '\r' | grep -q '^package:'; then adb uninstall com.aistra.hail; fi
         adb install "$fixture_dir/$distribution.apk"

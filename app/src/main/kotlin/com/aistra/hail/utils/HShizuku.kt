@@ -76,27 +76,34 @@ object HShizuku {
         // Installed for this user, including apps with disabled launcher components.
         private val flags: Any = if (HTarget.T) PackageManager.GET_DISABLED_COMPONENTS.toLong() else PackageManager.GET_DISABLED_COMPONENTS
         private val user = HPackages.myUserId
+        val disableSetting by lazy {
+            if (isRoot) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+        }
 
         fun setting(pkg: String) = pm.javaClass.getMethod("getApplicationEnabledSetting", String::class.java, Int::class.java)
             .invoke(pm, pkg, user) as Int
 
         fun find(pkg: String): HPackages.UserPackage? {
-            val info = pm.javaClass.getMethod("getApplicationInfo", String::class.java, flagType, Int::class.java)
-                .invoke(pm, pkg, flags, user) as? ApplicationInfo ?: return null
+            val result = if (HTarget.P) HiddenApiBypass.invoke(pm.javaClass, pm, "getApplicationInfo", pkg, flags, user)
+            else pm.javaClass.getMethod("getApplicationInfo", String::class.java, flagType, Int::class.java)
+                .invoke(pm, pkg, flags, user)
+            val info = result as? ApplicationInfo ?: return null
             return HPackages.UserPackage(info, true, setting(pkg))
         }
 
         fun installed(): List<ApplicationInfo> {
-            val slice = pm.javaClass.getMethod("getInstalledApplications", flagType, Int::class.java).invoke(pm, flags, user)
-            return (slice.javaClass.getMethod("getList").invoke(slice) as List<*>).filterIsInstance<ApplicationInfo>()
+            val entries = if (HTarget.P) {
+                val slice = HiddenApiBypass.invoke(pm.javaClass, pm, "getInstalledApplications", flags, user)
+                HiddenApiBypass.invoke(Class.forName("android.content.pm.BaseParceledListSlice"), slice, "getList")
+            } else {
+                val slice = pm.javaClass.getMethod("getInstalledApplications", flagType, Int::class.java).invoke(pm, flags, user)
+                slice.javaClass.getMethod("getList").invoke(slice)
+            }
+            return (entries as List<*>).filterIsInstance<ApplicationInfo>()
         }
 
         fun setDisabled(packageName: String, disabled: Boolean): Boolean {
-            val newState = when {
-                !disabled -> PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                isRoot -> PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-                else -> PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
-            }
+            val newState = if (disabled) disableSetting else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             if (disabled) forceStopApp(packageName)
             pm.javaClass.getMethod(
                 "setApplicationEnabledSetting", String::class.java, Int::class.java, Int::class.java,

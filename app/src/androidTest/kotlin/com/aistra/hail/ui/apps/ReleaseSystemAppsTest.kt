@@ -68,6 +68,7 @@ class ReleaseSystemAppsTest {
             .first { pkg -> runCatching { pm.getApplicationInfo(pkg, 0) }.isSuccess && pm.getLaunchIntentForPackage(pkg) == null })
         packages.forEach { assertTrue(pm.getApplicationInfo(it, 0).flags and ApplicationInfo.FLAG_SYSTEM != 0) }
         val initial = packages.associateWith(pm::getApplicationEnabledSetting)
+        val serviceLabel = pm.getApplicationInfo(packages.last(), 0).loadLabel(pm).toString()
         val disableState = if (root) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
         val enabled = PackageManager.COMPONENT_ENABLED_STATE_ENABLED
         try {
@@ -99,11 +100,36 @@ class ReleaseSystemAppsTest {
             menu(R.string.action_unfreeze_all, "action_unfreeze_all")
             packages.forEach { expectSetting(it, enabled) }
             if (fork) {
-                setFixture(packages.last(), PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
-                menu(R.string.action_freeze_all, "action_freeze_all")
-                packages.forEach { expectSetting(it, disableState) }
-                menu(R.string.action_unfreeze_all, "action_unfreeze_all")
-                packages.forEach { expectSetting(it, enabled) }
+                val pkg = packages.last()
+                fun openStatus() {
+                    await(res("app_name").text(serviceLabel)).longClick()
+                    await(text(R.string.package_status_controls)).click()
+                }
+                setFixture(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
+                openStatus()
+                await(res("report").textContains(context.getString(R.string.package_until_used)))
+                await(text(R.string.disable_app)).click()
+                if (root) {
+                    expectSetting(pkg, disableState)
+                    await(text(R.string.enable_app)).click()
+                    expectSetting(pkg, enabled)
+                } else {
+                    await(res("report").textContains("Shell cannot change component state"))
+                    expectSetting(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
+                }
+                device.pressBack()
+                if (root) {
+                    setFixture(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER)
+                    openStatus()
+                    await(text(R.string.apply_full_disable)).click()
+                    expectSetting(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED)
+                    device.pressBack()
+                    setFixture(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER)
+                    menu(R.string.action_freeze_all, "action_freeze_all")
+                    packages.forEach { expectSetting(it, disableState) }
+                    menu(R.string.action_unfreeze_all, "action_unfreeze_all")
+                    packages.forEach { expectSetting(it, enabled) }
+                }
             }
             Log.i("HailParity", "$version / ${args.getString("server")} / ${packages.joinToString()}: Android verified $disableState then $enabled")
         } finally {

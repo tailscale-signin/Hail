@@ -12,6 +12,12 @@ class PackageLookup(private val mode: String) {
             runCatching { HShizuku.Packages() }.getOrNull() else null
     }
     private val root by lazy { if (mode == HailData.MODE_SU_DISABLE) HShell.installedEnabledStates() else null }
+    val disableSetting: Int? get() = when (mode) {
+        HailData.MODE_SHIZUKU_DISABLE -> runCatching { shizuku?.disableSetting }.getOrNull()
+        HailData.MODE_SU_DISABLE, HailData.MODE_PRIVAPP_DISABLE, HailData.MODE_JAILBREAK_DISABLE ->
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        else -> null
+    }
 
     fun find(pkg: String): UserPackage? {
         shizuku?.let { service -> runCatching { service.find(pkg) }.getOrNull()?.let { return it } }
@@ -24,18 +30,19 @@ class PackageLookup(private val mode: String) {
         val roots = root
         if (service == null && roots == null) return local
         return local.toMutableMap().apply {
-            service?.let { runCatching { it.installed() }.getOrNull() }?.forEach { info ->
-                put(info.packageName, UserPackage(info, true))
+            if (service != null) {
+                val readSetting: (String) -> Int? = { pkg -> runCatching { service.setting(pkg) }.getOrNull() }
+                runCatching { service.installed() }.getOrNull()?.forEach { info ->
+                    put(info.packageName, UserPackage(info, true, readSetting = readSetting))
+                }
             }
             roots?.forEach { (pkg, enabled) -> put(pkg, rootRecord(pkg, get(pkg), enabled)) }
         }
     }
 
     private fun rootRecord(pkg: String, local: UserPackage?, enabled: Boolean): UserPackage {
-        val setting = when {
-            enabled -> PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-            HPackages.currentEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED ->
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED
+        val setting = if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else when (val observed = HPackages.currentEnabledSetting(pkg)) {
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> observed
             else -> PackageManager.COMPONENT_ENABLED_STATE_DISABLED
         }
         return UserPackage(local?.info, true, setting)

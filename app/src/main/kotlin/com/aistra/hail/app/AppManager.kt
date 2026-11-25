@@ -43,13 +43,17 @@ object AppManager {
         else -> !info.enabled || HPackages.isHidden(info) || (HTarget.N && info.flags and ApplicationInfo.FLAG_SUSPENDED != 0)
     }
 
-    fun state(pkg: HPackages.UserPackage?, mode: String = HailData.workingMode, requestedFrozen: Boolean? = null): AppInfo.State {
+    fun state(pkg: HPackages.UserPackage?, mode: String = HailData.workingMode, targetSetting: Int? = null): AppInfo.State {
         if (pkg == null || !pkg.installed) return AppInfo.State.NOT_FOUND
         val frozen = if (mode.endsWith(HailData.DISABLE)) {
             val setting = pkg.setting()
             // Android can reactivate DISABLED_UNTIL_USED on first use. Either explicit request must reach the backend.
-            if (setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED) requestedFrozen == false
-            else !pkg.canDisable(setting)
+            when {
+                setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> targetSetting == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                // 1.13.2 wrote DISABLED_USER even with root. An explicit full disable must repair that older state.
+                setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER && targetSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED -> false
+                else -> !pkg.canDisable(setting)
+            }
         } else pkg.info?.let { isAppFrozen(it, mode) } == true
         return if (frozen) AppInfo.State.FROZEN else AppInfo.State.UNFROZEN
     }
@@ -74,12 +78,13 @@ object AppManager {
             withContext(Dispatchers.IO) {
                 val infoByPackage = mutableMapOf<String, ApplicationInfo>()
                 val lookup = PackageLookup(mode)
+                val targetSetting = if (frozen) lookup.disableSetting else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                 var androidError: String? = null
                 val result = FreezeBatch.run(packages, BuildConfig.APPLICATION_ID, frozen,
                     state = { pkg ->
                         val record = lookup.find(pkg)
                         if (includeLabel) record?.info?.let { infoByPackage[pkg] = it }
-                        state(record, mode, frozen)
+                        state(record, mode, targetSetting)
                     },
                     apply = { batch ->
                         when (mode) {
@@ -109,18 +114,20 @@ object AppManager {
                 val failureMessage = if (failed != null && mode.endsWith(HailData.DISABLE) &&
                     result.changed.isEmpty() && result.unchanged.isEmpty() && result.missing.isEmpty()) {
                     val info = infoByPackage[failed] ?: HPackages.getApplicationInfoOrNull(failed)
-                    listOfNotNull(disableFailureMessage(failed, mode, info), androidError).joinToString("\n").ifBlank { null }
+                    listOfNotNull(disableFailureMessage(failed, mode, info, androidError), androidError).joinToString("\n").ifBlank { null }
                 } else null
                 result.copy(singleLabel = label, failureMessage = failureMessage)
             }
         }
     }
 
-    private fun disableFailureMessage(pkg: String, mode: String, info: ApplicationInfo?): String? {
+    private fun disableFailureMessage(pkg: String, mode: String, info: ApplicationInfo?, error: String?): String? {
         if (mode == HailData.MODE_SHIZUKU_DISABLE) {
             if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) return app.getString(R.string.start_shizuku)
             if (!runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false))
                 return app.getString(R.string.authorize_shizuku)
+            if (error?.contains("Shell cannot change component state") == true)
+                return app.getString(R.string.package_shell_refused, pkg)
         }
         return if (info != null && HPackages.isSystemApp(info)) app.getString(R.string.system_app_change_failed, pkg) else null
     }

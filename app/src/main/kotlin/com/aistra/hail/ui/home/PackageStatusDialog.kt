@@ -89,9 +89,12 @@ class PackageStatusDialog : DialogFragment() {
             shizukuUid != null -> HailData.MODE_SHIZUKU_DISABLE
             else -> null
         }
-        val record = withContext(Dispatchers.IO) { PackageLookup(method ?: mode).find(pkg) }
+        val lookup = PackageLookup(method ?: mode)
+        val record = withContext(Dispatchers.IO) { lookup.find(pkg) }
         val setting = withContext(Dispatchers.IO) { record?.setting() }
         val enabled = record?.takeIf { it.installed }?.canDisable(setting)
+        val upgrade = enabled == false && setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER &&
+            withContext(Dispatchers.IO) { lookup.disableSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED }
         val alert = dialog as? AlertDialog ?: return
         val modeName = resources.getStringArray(R.array.working_mode_entries).getOrNull(HailData.WORKING_MODE_VALUES.indexOf(mode)) ?: mode
         val label = record?.info?.loadLabel(requireContext().packageManager)?.toString() ?: pkg
@@ -99,7 +102,7 @@ class PackageStatusDialog : DialogFragment() {
         val status = when (enabled) {
             true -> if (setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
                 R.string.package_until_used else R.string.package_enabled
-            false -> R.string.package_disabled
+            false -> if (upgrade) R.string.package_disabled_user else R.string.package_disabled
             null -> if (record == null) R.string.package_unknown_here else R.string.package_retained_here
         }
         binding.report.text = listOfNotNull(pkg, getString(R.string.package_user_mode, HPackages.myUserId, modeName),
@@ -109,6 +112,9 @@ class PackageStatusDialog : DialogFragment() {
         alert.getButton(DialogInterface.BUTTON_POSITIVE).isVisible = record != null
         binding.removeFromHome.isVisible = enabled == null && HailData.isChecked(pkg)
         binding.removeFromHome.setOnClickListener { remove = true; dismiss() }
+        binding.fullDisable.isVisible = upgrade && pkg != requireContext().packageName
+        binding.fullDisable.isEnabled = true
+        binding.fullDisable.setOnClickListener { if (method != null) change(true, method) }
         binding.packageAction.apply {
             isVisible = enabled == null || (method != null && pkg != requireContext().packageName)
             isEnabled = true
@@ -119,15 +125,19 @@ class PackageStatusDialog : DialogFragment() {
                 else -> R.string.enable_app
             })
             setOnClickListener {
-                isEnabled = false
-                work = lifecycleScope.launch {
-                    message = if (enabled != null && method != null) {
-                        val result = AppManager.changeFrozen(listOf(pkg), enabled, mode = method)
-                        if (result.reachedTarget(pkg)) null else AppManager.resultMessage(result, enabled)
-                    } else null
-                    render()
-                }
+                if (enabled != null && method != null) change(enabled, method)
+                else { isEnabled = false; message = null; refresh() }
             }
+        }
+    }
+
+    private fun change(disable: Boolean, mode: String) {
+        binding.packageAction.isEnabled = false
+        binding.fullDisable.isEnabled = false
+        work = lifecycleScope.launch {
+            val result = AppManager.changeFrozen(listOf(pkg), disable, mode = mode)
+            message = if (result.reachedTarget(pkg)) null else AppManager.resultMessage(result, disable)
+            render()
         }
     }
 
