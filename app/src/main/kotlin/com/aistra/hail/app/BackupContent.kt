@@ -4,8 +4,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import android.util.JsonReader
 import android.util.JsonToken
-import com.aistra.hail.BuildConfig
-import com.aistra.hail.utils.HPackages
 import java.io.StringReader
 import java.nio.ByteBuffer
 import java.io.ByteArrayOutputStream
@@ -20,17 +18,7 @@ class BackupContent(
     val settings: Map<String, Any>,
     val frozenStates: Map<String, Boolean> = emptyMap()
 ) {
-    fun captureFrozenStates(): BackupContent {
-        val mode = HailData.workingMode
-        val states = buildMap {
-            for (item in apps) {
-                if (item.packageName == BuildConfig.APPLICATION_ID) continue
-                val info = HPackages.getApplicationInfoOrNull(item.packageName) ?: continue
-                put(item.packageName, AppManager.isAppFrozen(info, mode))
-            }
-        }
-        return BackupContent(apps, tags, settings, states)
-    }
+    suspend fun captureFrozenStates() = BackupContent(apps, tags, settings, AppManager.snapshotFrozenStates(apps))
 
     fun writeTo(output: OutputStream) {
         val bytes = JSONObject().put("format", FORMAT).put("version", 1)

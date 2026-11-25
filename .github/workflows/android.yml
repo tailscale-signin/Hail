@@ -38,7 +38,7 @@ jobs:
           if-no-files-found: error
       - name: Enable emulator acceleration
         run: sudo chmod a+rw /dev/kvm
-      - name: Test backup, shortcuts and device-owner actions on Android 16
+      - name: Test backup, shortcuts and package actions on Android 16
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 36

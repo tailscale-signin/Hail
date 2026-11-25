@@ -40,9 +40,22 @@ object AppManager {
     }
 
     fun state(info: ApplicationInfo?, mode: String = HailData.workingMode): AppInfo.State = when {
-        info == null -> AppInfo.State.NOT_FOUND
+        info == null || info.flags and ApplicationInfo.FLAG_INSTALLED == 0 -> AppInfo.State.NOT_FOUND
         isAppFrozen(info, mode) -> AppInfo.State.FROZEN
         else -> AppInfo.State.UNFROZEN
+    }
+
+    suspend fun snapshotFrozenStates(apps: List<AppInfo>): Map<String, Boolean> = mutations.withLock {
+        withContext(Dispatchers.IO) {
+            val mode = HailData.workingMode
+            buildMap {
+                for (item in apps) {
+                    if (item.packageName == BuildConfig.APPLICATION_ID) continue
+                    val current = state(HPackages.getApplicationInfoOrNull(item.packageName), mode)
+                    if (current != AppInfo.State.NOT_FOUND) put(item.packageName, current == AppInfo.State.FROZEN)
+                }
+            }
+        }
     }
 
     suspend fun changeFrozen(packages: Collection<String>, frozen: Boolean): FreezeResult {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Device-owner provisioning and fixture seeding belong on the disposable CI emulator.
+# Package fixtures and legacy app data belong on the disposable CI emulator.
 if [[ ${GITHUB_ACTIONS:-} != true ]] || ! grep -Eq '\[(ro.kernel.qemu|ro.boot.qemu)\]: \[1\]' <<< "$(adb shell getprop)"; then
     echo "This fixture setup requires the GitHub Actions emulator." >&2
     exit 1
@@ -18,10 +18,10 @@ JSON
 adb shell -T 'run-as com.aistra.hail.debug sh -c "cat > files/v1/tags.json"' <<'JSON'
 [{"tag":"Default","id":0},{"tag":"Legacy","id":-91}]
 JSON
-adb shell dpm set-device-owner com.aistra.hail.debug/com.aistra.hail.receiver.DeviceAdminReceiver
+keytool -genkeypair -keystore "$fixture_dir/test.p12" -storetype PKCS12 -storepass android -keypass android -alias fixture -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Hail CI Fixture"
 for name in one two; do
     cat > "$fixture_dir/AndroidManifest.xml" <<XML
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.aistra.hail.testfixture.$name">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.aistra.hail.testfixture.$name" android:versionCode="1" android:versionName="1">
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="36" />
     <application android:hasCode="false" android:label="Hail fixture $name">
         <activity android:name="android.app.Activity" android:exported="true">
@@ -34,7 +34,7 @@ for name in one two; do
 </manifest>
 XML
     "$sdk_tools/aapt2" link -I "$ANDROID_HOME/platforms/android-37.2/android.jar" --manifest "$fixture_dir/AndroidManifest.xml" -o "$fixture_dir/$name.apk"
-    "$sdk_tools/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android --ks-key-alias androiddebugkey "$fixture_dir/$name.apk"
+    "$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture "$fixture_dir/$name.apk"
     adb install -r "$fixture_dir/$name.apk"
 done
 ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.hailCiFixtures=true
