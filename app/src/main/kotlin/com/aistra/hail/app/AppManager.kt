@@ -46,7 +46,8 @@ object AppManager {
     fun state(pkg: HPackages.UserPackage?, mode: String = HailData.workingMode, targetSetting: Int? = null): AppInfo.State {
         if (pkg == null || !pkg.installed) return AppInfo.State.NOT_FOUND
         val frozen = if (mode.endsWith(HailData.DISABLE)) {
-            val setting = pkg.setting()
+            // The installed inventory carries effective enablement. Read an exact override for a requested change.
+            val setting = if (targetSetting == null) pkg.enabledSetting else pkg.setting()
             // Android can reactivate DISABLED_UNTIL_USED on first use. Either explicit request must reach the backend.
             when {
                 setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> targetSetting == PackageManager.COMPONENT_ENABLED_STATE_ENABLED

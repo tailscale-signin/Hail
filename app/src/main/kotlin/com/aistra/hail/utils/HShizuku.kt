@@ -74,14 +74,14 @@ object HShizuku {
         private val pm = asInterface("android.content.pm.IPackageManager", "package")
         private val flagType = if (HTarget.T) Long::class.javaPrimitiveType!! else Int::class.javaPrimitiveType!!
         // Installed for this user, including apps with disabled launcher components.
-        private val flags: Any = if (HTarget.T) PackageManager.GET_DISABLED_COMPONENTS.toLong() else PackageManager.GET_DISABLED_COMPONENTS
+        private val flags: Any = if (HTarget.T) HPackages.INSTALLED_FOR_USER.toLong() else HPackages.INSTALLED_FOR_USER
         private val user = HPackages.myUserId
+        private val getSetting by lazy { pm.javaClass.getMethod("getApplicationEnabledSetting", String::class.java, Int::class.java) }
         val disableSetting by lazy {
             if (isRoot) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
         }
 
-        fun setting(pkg: String) = pm.javaClass.getMethod("getApplicationEnabledSetting", String::class.java, Int::class.java)
-            .invoke(pm, pkg, user) as Int
+        fun setting(pkg: String) = getSetting.invoke(pm, pkg, user) as Int
 
         fun find(pkg: String): HPackages.UserPackage? {
             val result = if (HTarget.P) HiddenApiBypass.invoke(pm.javaClass, pm, "getApplicationInfo", pkg, flags, user)

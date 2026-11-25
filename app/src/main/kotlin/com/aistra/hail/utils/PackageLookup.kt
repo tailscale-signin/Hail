@@ -31,9 +31,8 @@ class PackageLookup(private val mode: String) {
         if (service == null && roots == null) return local
         return local.toMutableMap().apply {
             if (service != null) {
-                val readSetting: (String) -> Int? = { pkg -> runCatching { service.setting(pkg) }.getOrNull() }
                 runCatching { service.installed() }.getOrNull()?.forEach { info ->
-                    put(info.packageName, UserPackage(info, true, readSetting = readSetting))
+                    put(info.packageName, UserPackage(info, true))
                 }
             }
             roots?.forEach { (pkg, enabled) -> put(pkg, rootRecord(pkg, get(pkg), enabled)) }
