@@ -203,7 +203,17 @@ class SystemAppsTest {
         val oldMode = prefs.getString(HailData.WORKING_MODE, null)
         try {
             prefs.edit().putString(HailData.WORKING_MODE, HailData.MODE_PRIVAPP_DISABLE).commit()
-            val denied = AppManager.changeFrozen(listOf(pkg), true)
+            ctx.startActivity(requireNotNull(pm.getLaunchIntentForPackage(pkg)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            assertTrue(device.wait(Until.hasObject(By.pkg(pkg)), 10_000))
+            fun stopped() = pm.getApplicationInfo(pkg, 0).flags and ApplicationInfo.FLAG_STOPPED != 0
+            assertFalse(stopped())
+            instrumentation.uiAutomation.adoptShellPermissionIdentity("android.permission.FORCE_STOP_PACKAGES")
+            val denied = try {
+                AppManager.changeFrozen(listOf(pkg), true)
+            } finally {
+                instrumentation.uiAutomation.dropShellPermissionIdentity()
+            }
+            assertFalse("A denied disable must leave a running app alone", stopped())
             assertEquals(setOf(pkg), denied.failed)
             assertTrue(denied.changed.isEmpty())
             val message = AppManager.resultMessage(denied, true)
@@ -211,6 +221,7 @@ class SystemAppsTest {
             assertTrue("Expected the platform refusal", message.lineSequence().drop(1).any { it.contains(pkg) })
             assertEquals(oldSetting, pm.getApplicationEnabledSetting(pkg))
         } finally {
+            device.pressHome()
             prefs.edit().putString(HailData.WORKING_MODE, oldMode).commit()
         }
         Unit

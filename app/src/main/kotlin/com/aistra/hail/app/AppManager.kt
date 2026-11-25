@@ -84,7 +84,8 @@ object AppManager {
             buildMap {
                 for (item in apps) {
                     if (item.packageName == BuildConfig.APPLICATION_ID) continue
-                    val current = state(lookup.find(item.packageName), mode)
+                    val record = if (apps.size >= 8) lookup.fromInventory(item.packageName, forChange = true) else lookup.find(item.packageName)
+                    val current = state(record, mode)
                     if (!current.unavailable) put(item.packageName, current == AppInfo.State.FROZEN)
                 }
             }
