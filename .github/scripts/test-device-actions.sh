@@ -80,6 +80,14 @@ echo "3be0c4a210b0472198ea3b675fcbd5720fa16288dcff119557644ea947003236  $upstrea
 release_dir=app/build/outputs/apk/release
 release_apk="$release_dir/$(jq -r '.elements[0].outputFile' "$release_dir/output-metadata.json")"
 "$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture --out "$fixture_dir/fork.apk" "$release_apk"
+# Build the last affected fork release so we can install the fix over its real settings and disabled packages.
+previous=c6608891e5f1a2719e57e51db3645e7c701a2c29
+git fetch --quiet --no-tags origin "$previous"
+git worktree add --quiet --detach "$fixture_dir/previous-src" "$previous"
+(cd "$fixture_dir/previous-src" && ./gradlew :app:assembleRelease)
+previous_apk="$fixture_dir/previous-src/app/build/outputs/apk/release/Hail-v1.13.2.apk"
+"$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture --out "$fixture_dir/legacy.apk" "$previous_apk"
+git worktree remove --force "$fixture_dir/previous-src"
 for server in shell root; do
     uid=2000
     if [[ $server == root ]]; then
@@ -99,9 +107,15 @@ for server in shell root; do
         sleep 1
     done
     test "$actual_uid" = "$uid"
-    for distribution in upstream fork; do
-        if adb shell pm path com.aistra.hail | tr -d '\r' | grep -q '^package:'; then adb uninstall com.aistra.hail; fi
-        adb install "$fixture_dir/$distribution.apk"
+    distributions=(upstream fork)
+    if [[ $server == root ]]; then distributions=(upstream legacy fork); fi
+    for distribution in "${distributions[@]}"; do
+        if [[ $server == root && $distribution == fork ]]; then
+            adb install -r "$fixture_dir/fork.apk"
+        else
+            if adb shell pm path com.aistra.hail | tr -d '\r' | grep -q '^package:'; then adb uninstall com.aistra.hail; fi
+            adb install "$fixture_dir/$distribution.apk"
+        fi
         output="$report/parity-$distribution-$server.txt"
         timeout 3m adb shell am instrument -w -r -e class com.aistra.hail.ui.apps.ReleaseSystemAppsTest \
             -e hailReleaseParity true -e server "$server" -e distribution "$distribution" \

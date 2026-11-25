@@ -57,56 +57,78 @@ class ReleaseSystemAppsTest {
         finally { host.uiAutomation.dropShellPermissionIdentity() }
     }
 
+    private fun configure(packages: List<String>) {
+        await(res("nav_settings")).click()
+        await(text(R.string.working_mode)).click()
+        await(text(R.string.mode_shizuku_disable)).click()
+        device.wait(Until.findObject(By.pkg("moe.shizuku.privileged.api")
+            .text(Pattern.compile("Allow all the time", Pattern.CASE_INSENSITIVE))), 4_000)?.click()
+        await(text(R.string.mode_shizuku_disable))
+        await(res("nav_apps")).click()
+        menu(R.string.filter_by, "action_apps_filter")
+        await(text(R.string.filter_system_apps)).click()
+        await(text(R.string.action_continue)).click()
+        menu(R.string.action_search, "action_search")
+        for (pkg in packages) {
+            await(res("search_src_text")).text = pkg
+            val desc = await(res("app_desc").text(pkg))
+            val star = generateSequence(desc) { it.parent }.firstNotNullOf { it.findObject(res("app_star")) }
+            if (!star.isChecked) star.click()
+            assertTrue(device.wait(Until.hasObject(res("app_star").checked(true)), 5_000))
+        }
+        device.findObject(By.desc(context.getString(androidx.appcompat.R.string.abc_toolbar_collapse_description)))?.click()
+    }
+
+    private fun openStatus(label: String) {
+        await(res("app_name").text(label)).longClick()
+        await(text(R.string.package_status_controls)).click()
+    }
+
     @Test fun freezesAndThawsFromHome() {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("hailReleaseParity") == "true")
         val root = args.getString("server") == "root"
-        val fork = args.getString("distribution") == "fork"
-        val version = pm.getPackageInfo(target, 0).versionName.orEmpty()
-        if (fork) assertFalse(version.startsWith("1.11.0")) else assertEquals("1.11.0", version)
+        val distribution = args.getString("distribution")
+        val fork = distribution == "fork"
+        val legacy = distribution == "legacy"
+        val upgrade = fork && root
+        val apk = pm.getPackageInfo(target, 0)
+        when (distribution) {
+            "upstream" -> assertEquals("1.11.0", apk.versionName)
+            "legacy" -> assertEquals("1.13.2", apk.versionName)
+            "fork" -> assertTrue(apk.longVersionCode >= 40)
+            else -> error("Unknown APK $distribution")
+        }
         val packages = listOf("com.android.deskclock", listOf("com.android.dreams.basic", "com.android.printspooler")
             .first { pkg -> runCatching { pm.getApplicationInfo(pkg, 0) }.isSuccess && pm.getLaunchIntentForPackage(pkg) == null })
         packages.forEach { assertTrue(pm.getApplicationInfo(it, 0).flags and ApplicationInfo.FLAG_SYSTEM != 0) }
-        val initial = packages.associateWith(pm::getApplicationEnabledSetting)
+        val history = context.getSharedPreferences("parity-fixture-restore", 0)
+        val initial = packages.associateWith { if (upgrade) history.getInt(it, PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) else pm.getApplicationEnabledSetting(it) }
         val serviceLabel = pm.getApplicationInfo(packages.last(), 0).loadLabel(pm).toString()
-        val disableState = if (root) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+        val disableState = if (root && !legacy) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
         val enabled = PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        var retainForUpgrade = false
         try {
-            packages.forEach { setFixture(it, enabled) }
+            if (upgrade) packages.forEach { expectSetting(it, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) }
+            else packages.forEach { setFixture(it, enabled) }
             context.startActivity(requireNotNull(pm.getLaunchIntentForPackage(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            await(res("nav_settings")).click()
-            await(text(R.string.working_mode)).click()
-            await(text(R.string.mode_shizuku_disable)).click()
-            device.wait(Until.findObject(By.pkg("moe.shizuku.privileged.api")
-                .text(Pattern.compile("Allow all the time", Pattern.CASE_INSENSITIVE))), 4_000)?.click()
-            await(text(R.string.mode_shizuku_disable))
-            await(res("nav_apps")).click()
-            menu(R.string.filter_by, "action_apps_filter")
-            await(text(R.string.filter_system_apps)).click()
-            await(text(R.string.action_continue)).click()
-            menu(R.string.action_search, "action_search")
-            for (pkg in packages) {
-                await(res("search_src_text")).text = pkg
-                val desc = await(res("app_desc").text(pkg))
-                val star = generateSequence(desc) { it.parent }.firstNotNullOf { it.findObject(res("app_star")) }
-                if (!star.isChecked) star.click()
-                assertTrue(device.wait(Until.hasObject(res("app_star").checked(true)), 5_000))
-            }
-            device.findObject(By.desc(context.getString(androidx.appcompat.R.string.abc_toolbar_collapse_description)))?.click()
+            if (!upgrade) configure(packages)
             await(res("nav_home")).click()
             await(res("app_name").text(pm.getApplicationInfo(packages.first(), 0).loadLabel(pm).toString()))
+            if (upgrade) {
+                openStatus(serviceLabel)
+                await(text(R.string.apply_full_disable)).click()
+                expectSetting(packages.last(), disableState)
+                device.pressBack()
+            }
             menu(R.string.action_freeze_all, "action_freeze_all")
             packages.forEach { expectSetting(it, disableState) }
             menu(R.string.action_unfreeze_all, "action_unfreeze_all")
             packages.forEach { expectSetting(it, enabled) }
             if (fork) {
                 val pkg = packages.last()
-                fun openStatus() {
-                    await(res("app_name").text(serviceLabel)).longClick()
-                    await(text(R.string.package_status_controls)).click()
-                }
                 setFixture(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
-                openStatus()
+                openStatus(serviceLabel)
                 await(res("report").textContains(context.getString(R.string.package_until_used)))
                 await(text(R.string.disable_app)).click()
                 if (root) {
@@ -118,22 +140,17 @@ class ReleaseSystemAppsTest {
                     expectSetting(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
                 }
                 device.pressBack()
-                if (root) {
-                    setFixture(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER)
-                    openStatus()
-                    await(text(R.string.apply_full_disable)).click()
-                    expectSetting(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED)
-                    device.pressBack()
-                    setFixture(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER)
-                    menu(R.string.action_freeze_all, "action_freeze_all")
-                    packages.forEach { expectSetting(it, disableState) }
-                    menu(R.string.action_unfreeze_all, "action_unfreeze_all")
-                    packages.forEach { expectSetting(it, enabled) }
-                }
             }
-            Log.i("HailParity", "$version / ${args.getString("server")} / ${packages.joinToString()}: Android verified $disableState then $enabled")
+            if (legacy) {
+                menu(R.string.action_freeze_all, "action_freeze_all")
+                packages.forEach { expectSetting(it, disableState) }
+                assertTrue(history.edit().also { prefs -> initial.forEach { (pkg, setting) -> prefs.putInt(pkg, setting) } }.commit())
+                retainForUpgrade = true
+            }
+            Log.i("HailParity", "${apk.versionName} / ${args.getString("server")} / ${packages.joinToString()}: Android verified $disableState then $enabled")
         } finally {
-            initial.forEach { (pkg, setting) -> setFixture(pkg, setting) }
+            if (!retainForUpgrade) initial.forEach { (pkg, setting) -> setFixture(pkg, setting) }
+            if (upgrade) history.edit().clear().commit()
             device.pressHome()
         }
     }
