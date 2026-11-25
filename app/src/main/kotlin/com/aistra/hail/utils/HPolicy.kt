@@ -62,7 +62,12 @@ object HPolicy {
 
     @Suppress("DEPRECATION")
     fun removeProfileOwner() {
-        if (isProfileOwner) dpm.clearProfileOwner(admin)
+        if (!isProfileOwner) return
+        if (HTarget.N) dpm.clearProfileOwner(admin) else {
+            val settings = Intent(android.provider.Settings.ACTION_SYNC_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (settings.resolveActivity(app.packageManager) != null) app.startActivity(settings)
+            else HUI.showToast(com.aistra.hail.R.string.activity_not_found)
+        }
     }
 
     @Suppress("DEPRECATION")
