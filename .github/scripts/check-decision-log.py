@@ -8,6 +8,7 @@ header, *events = [json.loads(line) for line in Path(path).read_text().splitline
 uid, disabled = (0, 2) if server == "root" else (2000, 3)
 assert header["schema"] == 1 and header["recordingAtExport"] is False
 assert header["version"] == "1.13.3" and header["sdk"] == 36 and header["writeErrorsThisProcess"] == 0
+assert len({e["session"] for e in events if e["step"] == "session_started"}) >= 2
 assert events[-1]["step"] == "logging_stopped"
 for session in {e["session"] for e in events}:
     seq = [e["seq"] for e in events if e["session"] == session]
@@ -40,6 +41,9 @@ operation("home_all", "freeze", check("permission", serviceUid=uid, granted=True
           check("android_call", package=clock, requestedSetting=disabled),
           check("readback", package=clock, observedSetting=disabled, verified=True),
           check("outcome", package=clock, result="changed"))
+operation("home_all", "freeze", check("skipped", package=clock, reason="Already in the requested state"),
+          check("batch_result", changed=0, unchanged=2))
+assert any(contains(rows, "home_row", package=clock, installedForUser=True) for rows in ops.values())
 operation("home_all", "unfreeze", check("android_call", package=service, requestedSetting=1),
           check("readback", package=service, observedSetting=1, verified=True))
 transition = operation("home_status", "freeze", check("enabled_setting", package=service, beforeSetting=4),

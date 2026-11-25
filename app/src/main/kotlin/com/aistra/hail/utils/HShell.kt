@@ -59,7 +59,7 @@ object HShell {
         if (code != 0) throw IllegalStateException(output?.trim()?.takeIf { it.isNotEmpty() } ?: "pm ($code)")
         val verified = output?.lineSequence()?.any { it.trim() == "package:$packageName" } == true
         trace?.event("readback", packageName, "reader" to "root pm list packages $filter", "exitCode" to code,
-            "observedSetting" to HPackages.currentEnabledSetting(packageName), "verified" to verified)
+            "settingReader" to "local PackageManager", "observedSetting" to HPackages.currentEnabledSetting(packageName), "verified" to verified)
         return verified
     }
 

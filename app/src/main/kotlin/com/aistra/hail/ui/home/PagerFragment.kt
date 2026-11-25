@@ -64,6 +64,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
     private val binding get() = _binding!!
     private lateinit var pagerAdapter: PagerAdapter
     private var listJob: Job? = null
+    private var lastLoggedView: Pair<String, String>? = null
     private var operations = 0
     private var multiselect: Boolean
         set(value) {
@@ -158,10 +159,14 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         val snapshot = HailData.checkedList.filter { search.isNotEmpty() || id in it.tagIdList }.map {
             HomeRow(it, null, "", AppInfo.State.NOT_FOUND, it.pinned, it.whitelisted, false, gray, font)
         }
+        val trace = DecisionLog.begin("home", "refresh", mode)
+        val loggingView = trace?.let { it.session to mode }
+        val previous = if (trace != null && lastLoggedView == loggingView)
+            pagerAdapter.currentList.associate { it.info.packageName to it.state } else emptyMap()
         listJob = viewLifecycleOwner.lifecycleScope.launch {
             val rows = withContext(Dispatchers.IO) {
                 val collator = Collator.getInstance()
-                val lookup = PackageLookup(mode)
+                val lookup = PackageLookup(mode, trace)
                 val packages = if (snapshot.isEmpty()) emptyMap() else lookup.all()
                 snapshot.mapNotNull { row ->
                     ensureActive()
@@ -173,9 +178,22 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                     if (search.isNotEmpty() && !(nineKey && NineKeySearch.search(search, pkg, label))
                         && !FuzzySearch.search(pkg, search) && !FuzzySearch.search(label, search)
                         && !PinyinSearch.searchPinyinAll(label, search)) return@mapNotNull null
-                    row.copy(application = application, label = label, state = AppManager.state(record, mode))
+                    val state = AppManager.state(record, mode)
+                    if (trace != null && previous[pkg] != state) {
+                        trace.event("home_row", pkg, "displayedState" to state.name, "listedInstalled" to listed?.installed,
+                            "installedForUser" to record?.installed, "hasMetadata" to (application != null),
+                            "system" to application?.let(HPackages::isSystemApp), "reason" to when (state) {
+                                AppInfo.State.NOT_FOUND -> "No current-user installation evidence"
+                                AppInfo.State.FROZEN -> "Package matches the selected frozen-state check"
+                                AppInfo.State.UNFROZEN -> "Package is available under the selected mode"
+                            })
+                    }
+                    row.copy(application = application, label = label, state = state)
                 }.sortedWith(compareByDescending<HomeRow> { it.pinned }.thenComparator { a, b -> collator.compare(a.label, b.label) })
             }
+            lastLoggedView = loggingView
+            trace?.event("list_displayed", null, "managedInView" to snapshot.size, "visible" to rows.size,
+                "unavailable" to rows.count { it.state == AppInfo.State.NOT_FOUND })
             binding.empty.isVisible = rows.isEmpty()
             showSelection(rows)
             binding.refresh.isRefreshing = operations > 0

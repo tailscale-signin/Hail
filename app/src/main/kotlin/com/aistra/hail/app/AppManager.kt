@@ -52,7 +52,12 @@ object AppManager {
         val frozen = if (mode.endsWith(HailData.DISABLE)) {
             // The installed inventory carries effective enablement. Read an exact override for a requested change.
             val setting = if (targetSetting == null) pkg.enabledSetting else pkg.setting()
-            trace?.event("enabled_setting", name, "beforeSetting" to setting, "requestedSetting" to targetSetting)
+            trace?.event("enabled_setting", name, "beforeSetting" to setting, "requestedSetting" to targetSetting,
+                "settingSource" to when {
+                    pkg.inferredSetting -> "Effective state inferred from root package inventory"
+                    setting != null -> "Android package enabled override"
+                    else -> "Only effective ApplicationInfo state is available"
+                })
             // Android can reactivate DISABLED_UNTIL_USED on first use. Either explicit request must reach the backend.
             when {
                 setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> {
@@ -91,13 +96,19 @@ object AppManager {
                              trace: DecisionTrace? = DecisionLog.change(source, frozen, mode)): FreezeResult {
         trace?.event("queued", null, "packages" to packages.size, "freeze" to frozen)
         return try {
-            withContext(Dispatchers.IO) {
-                mutations.withLock {
+            mutations.withLock {
+                withContext(Dispatchers.IO) {
                     val infoByPackage = mutableMapOf<String, ApplicationInfo>()
                     val lookup = PackageLookup(mode, trace)
                     val targetSetting = if (frozen) lookup.disableSetting else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                     trace?.event("backend_selected", null, "backend" to mode,
-                        "requestedSetting" to targetSetting.takeIf { mode.endsWith(HailData.DISABLE) })
+                        "requestedSetting" to targetSetting.takeIf { mode.endsWith(HailData.DISABLE) }, "reason" to when {
+                            !mode.endsWith(HailData.DISABLE) -> "Use the selected working mode"
+                            !frozen -> "Explicitly enable for the current Android user"
+                            targetSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER -> "ADB-backed Shizuku uses disable-user"
+                            targetSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED -> "Privileged backend uses full disable"
+                            else -> "Disable backend is unavailable"
+                        })
                     var androidError: String? = null
                     val result = FreezeBatch.run(packages, BuildConfig.APPLICATION_ID, frozen,
                         state = { pkg ->

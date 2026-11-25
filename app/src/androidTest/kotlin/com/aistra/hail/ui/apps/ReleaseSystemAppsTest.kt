@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.SystemClock
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -135,6 +136,10 @@ class ReleaseSystemAppsTest {
             if (fork) {
                 await(res("nav_settings")).click()
                 settingsItem(R.string.debug_logging)
+                // Restart the release process. Recording must resume from its persisted opt-in.
+                device.pressHome()
+                ParcelFileDescriptor.AutoCloseInputStream(host.uiAutomation.executeShellCommand("am force-stop $target")).use { it.readBytes() }
+                context.startActivity(requireNotNull(pm.getLaunchIntentForPackage(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
             await(res("nav_home")).click()
             await(res("app_name").text(pm.getApplicationInfo(packages.first(), 0).loadLabel(pm).toString()))
@@ -146,6 +151,7 @@ class ReleaseSystemAppsTest {
             }
             menu(R.string.action_freeze_all, "action_freeze_all")
             packages.forEach { expectSetting(it, disableState) }
+            if (fork) menu(R.string.action_freeze_all, "action_freeze_all")
             menu(R.string.action_unfreeze_all, "action_unfreeze_all")
             packages.forEach { expectSetting(it, enabled) }
             if (fork) {

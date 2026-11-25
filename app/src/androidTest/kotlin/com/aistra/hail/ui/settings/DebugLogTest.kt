@@ -6,6 +6,7 @@ import androidx.preference.PreferenceManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
+import com.aistra.hail.app.AppManager
 import com.aistra.hail.utils.DecisionLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -34,6 +35,16 @@ class DebugLogTest {
         try {
             DecisionLog.setEnabled(true)
             assertTrue(prefs.getBoolean(DecisionLog.PREF, false))
+            val missing = "example.hail.missing"
+            AppManager.changeFrozen(listOf(missing, missing, ctx.packageName), true, source = "missing_package_test")
+            DecisionLog.export(uri)
+            val skipped = requireNotNull(ctx.contentResolver.openInputStream(uri)).bufferedReader().useLines { lines ->
+                lines.map(::JSONObject).filter { it.optString("step") == "skipped" }
+                    .map { it.getString("package") to it.getString("reason") }.toSet()
+            }
+            assertTrue((missing to "No installed package for this Android user") in skipped)
+            assertTrue((missing to "Duplicate in the same request") in skipped)
+            assertTrue((ctx.packageName to "Hail cannot freeze itself") in skipped)
             val trace = requireNotNull(DecisionLog.begin("test", "retention_test"))
             val padding = "sample ".repeat(80)
             coroutineScope {

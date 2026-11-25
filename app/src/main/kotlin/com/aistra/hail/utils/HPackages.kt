@@ -17,7 +17,8 @@ object HPackages {
     @Suppress("DEPRECATION")
     internal const val INSTALLED_FOR_USER = PackageManager.GET_DISABLED_COMPONENTS or PackageManager.GET_DISABLED_UNTIL_USED_COMPONENTS
 
-    data class UserPackage(val info: ApplicationInfo?, val installed: Boolean, val enabledSetting: Int? = null) {
+    data class UserPackage(val info: ApplicationInfo?, val installed: Boolean, val enabledSetting: Int? = null,
+                           val inferredSetting: Boolean = false) {
         fun setting() = enabledSetting ?: info?.let { currentEnabledSetting(it.packageName) }
 
         fun canDisable(setting: Int? = setting()): Boolean = when (setting) {
