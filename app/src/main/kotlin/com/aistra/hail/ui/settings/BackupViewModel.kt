@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aistra.hail.HailApp.Companion.app
+import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.BackupContent
 import com.aistra.hail.app.HailData
 import com.aistra.hail.utils.AppIconCache
@@ -11,6 +12,7 @@ import com.aistra.hail.utils.HLog
 import com.aistra.hail.utils.HShortcuts
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -19,45 +21,56 @@ class BackupViewModel : ViewModel() {
     sealed interface State {
         data object Idle : State
         data object Busy : State
-        data class Preview(val data: BackupContent, val appsJson: String, val tagsJson: String) : State
+        data class Preview(val data: BackupContent, val appsJson: String, val tagsJson: String, val applyStates: Boolean = false) : State
         data object Saved : State
-        data object Restored : State
+        data class Restored(val changed: Int? = null, val unchanged: Int = 0, val unavailable: Int = 0, val failed: Int = 0) : State
         data object Failed : State
     }
 
-    val state = MutableStateFlow<State>(State.Idle)
+    private val current = MutableStateFlow<State>(State.Idle)
+    val state = current.asStateFlow()
+
+    fun dismiss() {
+        if (current.value != State.Busy) current.value = State.Idle
+    }
 
     fun open(uri: Uri, restore: Boolean) {
-        if (state.value != State.Idle) return
-        state.value = State.Busy
+        if (current.value != State.Idle) return
+        current.value = State.Busy
         viewModelScope.launch {
             try {
                 if (restore) {
-                    state.value = withContext(Dispatchers.IO) {
+                    current.value = withContext(Dispatchers.IO) {
                         val data = requireNotNull(app.contentResolver.openInputStream(uri)).use(BackupContent::readFrom)
                         State.Preview(data, BackupContent.encodeApps(data.apps).toString(), BackupContent.encodeTags(data.tags).toString())
                     }
                 } else {
                     val data = HailData.backupSnapshot()
                     withContext(Dispatchers.IO) {
-                        requireNotNull(app.contentResolver.openOutputStream(uri, "wt")).use(data::writeTo)
+                        val full = data.captureFrozenStates()
+                        requireNotNull(app.contentResolver.openOutputStream(uri, "wt")).use(full::writeTo)
                     }
-                    state.value = State.Saved
+                    current.value = State.Saved
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 HLog.e(e)
-                state.value = State.Failed
+                current.value = State.Failed
             }
         }
     }
 
+    fun toggleStates(enabled: Boolean) {
+        val preview = current.value as? State.Preview ?: return
+        current.value = preview.copy(applyStates = enabled)
+    }
+
     fun confirm() {
-        val preview = state.value as? State.Preview ?: return
+        val preview = current.value as? State.Preview ?: return
         val oldShortcut = HailData.dynamicShortcutAction
         HailData.restoreBackup(preview.data, preview.appsJson, preview.tagsJson)
-        state.value = State.Restored
+        current.value = State.Busy
         AppIconCache.clear()
         app.setAutoFreezeService()
         if (oldShortcut != HailData.dynamicShortcutAction) viewModelScope.launch(Dispatchers.IO) {
@@ -66,6 +79,16 @@ class BackupViewModel : ViewModel() {
                 HShortcuts.addDynamicShortcutAction(HailData.dynamicShortcutAction)
             }.onFailure { HLog.e(it) }
         }
-        app.setAppTheme(HailData.appTheme)
+        viewModelScope.launch {
+            val saved = preview.data.frozenStates
+            if (preview.applyStates && saved.isNotEmpty()) {
+                val results = saved.entries.groupBy({ it.value }, { it.key }).map { (frozen, packages) ->
+                    AppManager.changeFrozen(packages, frozen)
+                }
+                current.value = State.Restored(results.sumOf { it.changed.size }, results.sumOf { it.unchanged.size },
+                    results.sumOf { it.missing.size }, results.sumOf { it.failed.size })
+            } else current.value = State.Restored()
+            app.setAppTheme(HailData.appTheme)
+        }
     }
 }

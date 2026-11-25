@@ -2,7 +2,12 @@ package com.aistra.hail.app
 
 import org.json.JSONArray
 import org.json.JSONObject
-import org.json.JSONTokener
+import android.util.JsonReader
+import android.util.JsonToken
+import com.aistra.hail.BuildConfig
+import com.aistra.hail.utils.HPackages
+import java.io.StringReader
+import java.nio.ByteBuffer
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
@@ -12,11 +17,24 @@ internal const val MAX_BACKUP_BYTES = 4 * 1024 * 1024
 class BackupContent(
     val apps: List<AppInfo>,
     val tags: List<Pair<String, Int>>,
-    val settings: Map<String, Any>
+    val settings: Map<String, Any>,
+    val frozenStates: Map<String, Boolean> = emptyMap()
 ) {
+    fun captureFrozenStates(): BackupContent {
+        val mode = HailData.workingMode
+        val states = buildMap {
+            for (item in apps) {
+                if (item.packageName == BuildConfig.APPLICATION_ID) continue
+                val info = HPackages.getApplicationInfoOrNull(item.packageName) ?: continue
+                put(item.packageName, AppManager.isAppFrozen(info, mode))
+            }
+        }
+        return BackupContent(apps, tags, settings, states)
+    }
+
     fun writeTo(output: OutputStream) {
         val bytes = JSONObject().put("format", FORMAT).put("version", 1)
-            .put("apps", encodeApps(apps)).put("tags", encodeTags(tags))
+            .put("apps", encodeApps(apps, frozenStates)).put("tags", encodeTags(tags))
             .put("settings", JSONObject(settings)).toString().toByteArray(Charsets.UTF_8)
         require(bytes.size <= MAX_BACKUP_BYTES)
         output.write(bytes)
@@ -61,9 +79,13 @@ class BackupContent(
             return result
         }
 
-        fun encodeApps(apps: List<AppInfo>) = JSONArray().apply {
-            apps.forEach { put(JSONObject().put("package", it.packageName).put("pinned", it.pinned)
-                .put("whitelisted", it.whitelisted).put("tags", JSONArray(it.tagIdList))) }
+        fun encodeApps(apps: List<AppInfo>, states: Map<String, Boolean> = emptyMap()) = JSONArray().apply {
+            for (app in apps) {
+                val entry = JSONObject().put("package", app.packageName).put("pinned", app.pinned)
+                    .put("whitelisted", app.whitelisted).put("tags", JSONArray(app.tagIdList))
+                states[app.packageName]?.let { entry.put("frozen", it) }
+                put(entry)
+            }
         }
 
         fun encodeTags(tags: List<Pair<String, Int>>) = JSONArray().apply {
@@ -79,16 +101,20 @@ class BackupContent(
                 require(bytes.size() + count <= MAX_BACKUP_BYTES)
                 bytes.write(buffer, 0, count)
             }
-            val parser = JSONTokener(bytes.toString("UTF-8"))
-            val root = parser.nextValue() as JSONObject
-            require(parser.nextClean() == '\u0000' && root.get("format") == FORMAT && root.get("version") == 1)
+            val text = Charsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes.toByteArray()))
+            val root = JsonReader(StringReader(text.toString())).use { reader ->
+                (readValue(reader, 0) as JSONObject).also { require(reader.peek() == JsonToken.END_DOCUMENT) }
+            }
+            require(root.get("format") == FORMAT && root.get("version") == 1)
             val tags = root.getJSONArray("tags").mapObjects { (it.get("tag") as String) to (it.get("id") as Int) }
             val ids = tags.mapTo(hashSetOf()) { it.second }
             require(tags.firstOrNull()?.second == 0 && ids.size == tags.size)
             val seen = hashSetOf<String>()
+            val frozen = mutableMapOf<String, Boolean>()
             val apps = root.getJSONArray("apps").mapObjects { item ->
                 val pkg = item.get("package") as String
                 require(packageId.matches(pkg) && seen.add(pkg))
+                if (item.has("frozen")) frozen[pkg] = item.get("frozen") as Boolean
                 val values = item.getJSONArray("tags")
                 val memberships = MutableList(values.length()) { values.get(it) as Int }
                 require(memberships.isNotEmpty() && memberships.all { it in ids } && memberships.distinct().size == memberships.size)
@@ -96,7 +122,32 @@ class BackupContent(
             }
             val preferences = root.getJSONObject("settings")
             val settings = portableSettings(preferences.keys().asSequence().associateWith { preferences.get(it) })
-            return BackupContent(apps, tags, settings)
+            return BackupContent(apps, tags, settings, frozen)
+        }
+
+        private fun readValue(reader: JsonReader, depth: Int): Any {
+            require(depth <= 16)
+            return when (reader.peek()) {
+                JsonToken.BEGIN_OBJECT -> JSONObject().apply {
+                    reader.beginObject()
+                    while (reader.hasNext()) {
+                        val key = reader.nextName()
+                        require(!has(key))
+                        put(key, readValue(reader, depth + 1))
+                    }
+                    reader.endObject()
+                }
+                JsonToken.BEGIN_ARRAY -> JSONArray().apply {
+                    reader.beginArray()
+                    while (reader.hasNext()) put(readValue(reader, depth + 1))
+                    reader.endArray()
+                }
+                JsonToken.STRING -> reader.nextString()
+                JsonToken.BOOLEAN -> reader.nextBoolean()
+                JsonToken.NUMBER -> reader.nextString().let { it.toIntOrNull() ?: it.toDouble() }
+                JsonToken.NULL -> { reader.nextNull(); JSONObject.NULL }
+                else -> throw IllegalArgumentException("Unexpected JSON token")
+            }
         }
 
         private inline fun <T> JSONArray.mapObjects(transform: (JSONObject) -> T) =

@@ -135,7 +135,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             }
         }
         activity.fab.setOnClickListener {
-            setListFrozen(true, pagerAdapter.apps.filterNot { it.whitelisted })
+            setListFrozen(true, currentApps().filterNot { it.whitelisted })
         }
         activity.fab.setOnLongClickListener {
             setListFrozen(true)
@@ -147,13 +147,12 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         listJob?.cancel()
         val search = query
         val id = tag?.second
-        val selected = selectedList.toHashSet()
         val gray = HailData.grayscaleIcon
         val font = HailData.homeFontSize
         val mode = HailData.workingMode
         val nineKey = HailData.nineKeySearch
         val snapshot = HailData.checkedList.filter { search.isNotEmpty() || id in it.tagIdList }.map {
-            HomeRow(it, null, "", AppInfo.State.NOT_FOUND, it.pinned, it.whitelisted, it in selected, gray, font)
+            HomeRow(it, null, "", AppInfo.State.NOT_FOUND, it.pinned, it.whitelisted, false, gray, font)
         }
         listJob = viewLifecycleOwner.lifecycleScope.launch {
             val rows = withContext(Dispatchers.IO) {
@@ -170,9 +169,23 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                 }.sortedWith(compareByDescending<HomeRow> { it.pinned }.thenComparator { a, b -> collator.compare(a.label, b.label) })
             }
             binding.empty.isVisible = rows.isEmpty()
-            pagerAdapter.submitList(rows)
+            showSelection(rows)
             binding.refresh.isRefreshing = operations > 0
         }
+    }
+
+    private fun showSelection(rows: List<HomeRow> = pagerAdapter.currentList) {
+        val selected = selectedList.toHashSet()
+        pagerAdapter.submitList(rows.map { row ->
+            val isSelected = row.info in selected
+            if (row.selected == isSelected) row else row.copy(selected = isSelected)
+        })
+    }
+
+    private fun currentApps(): List<AppInfo> {
+        if (query.isNotEmpty()) return pagerAdapter.apps
+        val id = tag?.second ?: return emptyList()
+        return HailData.checkedList.filter { id in it.tagIdList }
     }
 
     private fun updateBarTitle() {
@@ -185,7 +198,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         if (multiselect) {
             if (info in selectedList) selectedList.remove(info)
             else selectedList.add(info)
-            updateCurrentList()
+            showSelection()
             updateBarTitle()
             return
         }
@@ -610,9 +623,9 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                 } else deselect()
             }
 
-            R.id.action_freeze_current -> setListFrozen(true, pagerAdapter.apps.filterNot { it.whitelisted })
+            R.id.action_freeze_current -> setListFrozen(true, currentApps().filterNot { it.whitelisted })
 
-            R.id.action_unfreeze_current -> setListFrozen(false, pagerAdapter.apps)
+            R.id.action_unfreeze_current -> setListFrozen(false, currentApps())
             R.id.action_freeze_all -> setListFrozen(true)
             R.id.action_unfreeze_all -> setListFrozen(false)
             R.id.action_freeze_non_whitelisted -> setListFrozen(true, HailData.checkedList.filterNot { it.whitelisted })
@@ -627,7 +640,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                 HUI.showToast(getString(R.string.msg_imported, size.toString()))
             }
 
-            R.id.action_export_current -> exportToClipboard(pagerAdapter.apps)
+            R.id.action_export_current -> exportToClipboard(currentApps())
             R.id.action_export_all -> exportToClipboard(HailData.checkedList)
         }
         return false

@@ -4,7 +4,8 @@ data class FreezeResult(
     val changed: Set<String>,
     val unchanged: Set<String>,
     val missing: Set<String>,
-    val failed: Set<String>
+    val failed: Set<String>,
+    val singleLabel: String? = null
 ) {
     fun reachedTarget(pkg: String) = pkg in changed || pkg in unchanged
 }
@@ -19,9 +20,11 @@ internal object FreezeBatch {
         val failed = linkedSetOf<String>()
         for (pkg in packages.distinct()) {
             if (pkg == self) continue
-            when (val current = state(pkg)) {
-                AppInfo.State.NOT_FOUND -> missing.add(pkg)
-                else -> if ((current == AppInfo.State.FROZEN) == frozen) unchanged.add(pkg) else pending.add(pkg)
+            val current = state(pkg)
+            when {
+                current == AppInfo.State.NOT_FOUND -> missing.add(pkg)
+                (current == AppInfo.State.FROZEN) == frozen -> unchanged.add(pkg)
+                else -> pending.add(pkg)
             }
         }
         for (batch in pending.chunked(64)) {

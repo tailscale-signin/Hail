@@ -47,10 +47,15 @@ object AppManager {
 
     suspend fun changeFrozen(packages: Collection<String>, frozen: Boolean): FreezeResult {
         val mode = HailData.workingMode
-        val result = mutations.withLock {
+        return mutations.withLock {
             withContext(Dispatchers.IO) {
-                FreezeBatch.run(packages, BuildConfig.APPLICATION_ID, frozen,
-                    state = { state(HPackages.getApplicationInfoOrNull(it), mode) },
+                val infoByPackage = mutableMapOf<String, ApplicationInfo>()
+                val result = FreezeBatch.run(packages, BuildConfig.APPLICATION_ID, frozen,
+                    state = { pkg ->
+                        val info = HPackages.getApplicationInfoOrNull(pkg)
+                        if (info != null) infoByPackage[pkg] = info
+                        state(info, mode)
+                    },
                     apply = { batch ->
                         when (mode) {
                             HailData.MODE_OWNER_SUSPEND -> HPolicy.setSuspended(batch, frozen)
@@ -65,13 +70,15 @@ object AppManager {
                             }
                         }
                     })
+                if (result.changed.isNotEmpty()) {
+                    changed.tryEmit(Unit)
+                    app.setAutoFreezeService()
+                }
+                val single = result.changed.singleOrNull() ?: result.unchanged.singleOrNull()
+                val label = single?.let { pkg -> runCatching { infoByPackage[pkg]?.loadLabel(app.packageManager)?.toString() }.getOrNull() }
+                result.copy(singleLabel = label)
             }
         }
-        if (result.changed.isNotEmpty()) {
-            changed.tryEmit(Unit)
-            app.setAutoFreezeService()
-        }
-        return result
     }
 
     fun resultMessage(result: FreezeResult, frozen: Boolean): String {
@@ -83,7 +90,11 @@ object AppManager {
             return app.getString(R.string.freeze_partial, result.changed.size, result.unchanged.size,
                 result.missing.size, result.failed.size)
         }
-        val display = result.changed.singleOrNull() ?: result.changed.size.toString()
+        if (result.changed.isEmpty() && result.unchanged.isNotEmpty()) {
+            val target = result.singleLabel ?: result.unchanged.size.toString()
+            return app.getString(if (frozen) R.string.already_frozen else R.string.already_unfrozen, target)
+        }
+        val display = result.changed.singleOrNull()?.let { result.singleLabel ?: it } ?: result.changed.size.toString()
         return app.getString(if (frozen) R.string.msg_freeze else R.string.msg_unfreeze, display)
     }
 

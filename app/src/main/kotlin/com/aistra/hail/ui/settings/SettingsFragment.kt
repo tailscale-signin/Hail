@@ -10,6 +10,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.ArrayRes
 import androidx.annotation.StringRes
 import androidx.appcompat.content.res.AppCompatResources
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.Role
+import androidx.compose.material3.Checkbox
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -308,19 +314,34 @@ class SettingsFragment : MainFragment(), MenuProvider {
         val current = state
         if (current == BackupViewModel.State.Idle) return
         val dismiss = {
-            backups.state.value = BackupViewModel.State.Idle
-            if (current == BackupViewModel.State.Restored) activity.recreate()
+            backups.dismiss()
+            if (current is BackupViewModel.State.Restored) activity.recreate()
         }
         AlertDialog(
             onDismissRequest = { if (current != BackupViewModel.State.Busy) dismiss() },
             title = { Text(stringResource(R.string.backup_title)) },
             text = {
                 when (current) {
-                    is BackupViewModel.State.Preview -> Text(stringResource(R.string.backup_preview,
-                        current.data.apps.size, current.data.tags.size))
+                    is BackupViewModel.State.Preview -> Column {
+                        Text(stringResource(R.string.backup_preview, current.data.apps.size, current.data.tags.size))
+                        if (current.data.frozenStates.isNotEmpty()) {
+                            if (HailData.workingMode != HailData.MODE_DEFAULT) Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.toggleable(current.applyStates, role = Role.Checkbox,
+                                    onValueChange = backups::toggleStates)
+                            ) {
+                                Checkbox(checked = current.applyStates, onCheckedChange = null)
+                                Text(stringResource(R.string.backup_apply_states, current.data.frozenStates.size))
+                            } else Text(stringResource(R.string.backup_states_need_mode))
+                        }
+                    }
                     BackupViewModel.State.Busy -> CircularProgressIndicator()
                     BackupViewModel.State.Saved -> Text(stringResource(R.string.backup_saved))
-                    BackupViewModel.State.Restored -> Text(stringResource(R.string.backup_restored))
+                    is BackupViewModel.State.Restored -> Column {
+                        Text(stringResource(R.string.backup_restored))
+                        if (current.changed != null) Text(stringResource(R.string.freeze_partial,
+                            current.changed, current.unchanged, current.unavailable, current.failed))
+                    }
                     else -> Text(stringResource(R.string.backup_failed))
                 }
             },

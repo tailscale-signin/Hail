@@ -42,7 +42,7 @@ class HailApp : Application() {
     fun setAutoFreezeService(autoFreezeAfterLock: Boolean = HailData.autoFreezeAfterLock, context: Context = app) {
         appScope.launch {
             serviceUpdate?.cancel()
-            serviceUpdate = launch {
+            serviceUpdate = launch update@{
                 val candidates = if (autoFreezeAfterLock) HailData.checkedList.filter {
                     !it.whitelisted && it.packageName != packageName
                 }.map { it.packageName } else emptyList()
@@ -54,7 +54,7 @@ class HailApp : Application() {
                     } == true }
                 }
                 val desired = start to (start && whitelisted)
-                if (desired == lastServiceState) return@launch
+                if (desired == lastServiceState) return@update
                 val intent = Intent(app, AutoFreezeService::class.java)
                 try {
                     if (start) {

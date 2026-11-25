@@ -78,6 +78,8 @@ class ApiActivity : ComponentActivity() {
         when (action) {
             Intent.ACTION_SHOW_APP_INFO -> {
                 val pkg = requirePackage()
+                if (withContext(Dispatchers.IO) { HPackages.getApplicationInfoOrNull(pkg) } == null)
+                    throw NameNotFoundException(getString(R.string.app_not_installed))
                 setContent { AppTheme { RedirectBottomSheet(pkg) } }
                 return false
             }
@@ -87,12 +89,11 @@ class ApiActivity : ComponentActivity() {
             HailApi.ACTION_LAUNCH -> launchApp(requirePackage(), runCatching { requireTagId }.getOrNull())
             HailApi.ACTION_FREEZE -> setAppFrozen(requirePackage(), true)
             HailApi.ACTION_UNFREEZE -> setAppFrozen(requirePackage(), false)
-            HailApi.ACTION_FREEZE_TAG -> setListFrozen(
-                true, HailData.checkedList.filter { requireTagId in it.tagIdList }, true
-            )
-
-            HailApi.ACTION_UNFREEZE_TAG -> setListFrozen(
-                false, HailData.checkedList.filter { requireTagId in it.tagIdList })
+            HailApi.ACTION_FREEZE_TAG, HailApi.ACTION_UNFREEZE_TAG -> {
+                val id = requireTagId
+                val freeze = action == HailApi.ACTION_FREEZE_TAG
+                setListFrozen(freeze, HailData.checkedList.filter { id in it.tagIdList }, skipWhitelisted = freeze)
+            }
 
             HailApi.ACTION_FREEZE_ALL -> setListFrozen(true)
             HailApi.ACTION_UNFREEZE_ALL -> setListFrozen(false)
@@ -195,7 +196,7 @@ class ApiActivity : ComponentActivity() {
             }
         })
 
-    private suspend fun requirePackage(): String {
+    private fun requirePackage(): String {
         val pkg = intent.run {
             if (action == Intent.ACTION_VIEW) data?.getQueryParameter(HailData.KEY_PACKAGE)
             else getStringExtra(
@@ -204,8 +205,6 @@ class ApiActivity : ComponentActivity() {
                 else "android.intent.extra.PACKAGE_NAME"
             )
         } ?: throw IllegalArgumentException("Package must not be null")
-        if (withContext(Dispatchers.IO) { HPackages.getApplicationInfoOrNull(pkg) } == null)
-            throw NameNotFoundException(getString(R.string.app_not_installed))
         return pkg
     }
 
@@ -226,11 +225,12 @@ class ApiActivity : ComponentActivity() {
     }
 
     private suspend fun setAppFrozen(pkg: String, frozen: Boolean) {
+        if (pkg == packageName) throw SecurityException(getString(R.string.permission_denied))
         if (frozen && !HailData.isChecked(pkg)) throw SecurityException("Package not checked")
         val result = AppManager.changeFrozen(listOf(pkg), frozen)
+        if (pkg in result.missing) throw NameNotFoundException(getString(R.string.app_not_installed))
         if (!result.reachedTarget(pkg)) throw IllegalStateException(AppManager.resultMessage(result, frozen))
-        val label = withContext(Dispatchers.IO) { HPackages.getApplicationInfoOrNull(pkg)?.loadLabel(packageManager) ?: pkg }
-        HUI.showToast(if (frozen) R.string.msg_freeze else R.string.msg_unfreeze, label)
+        HUI.showToast(AppManager.resultMessage(result, frozen))
     }
 
     private suspend fun setListFrozen(

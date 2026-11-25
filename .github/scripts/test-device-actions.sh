@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This script runs only inside the disposable CI emulator.
+# Device-owner provisioning and fixture seeding belong on the disposable CI emulator.
+if [[ ${GITHUB_ACTIONS:-} != true ]] || ! grep -Eq '\[(ro.kernel.qemu|ro.boot.qemu)\]: \[1\]' <<< "$(adb shell getprop)"; then
+    echo "This fixture setup requires the GitHub Actions emulator." >&2
+    exit 1
+fi
 sdk_tools="$ANDROID_HOME/build-tools/36.0.0"
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
 apk_dir=app/build/outputs/apk/debug
 adb install -r "$apk_dir/$(jq -r '.elements[0].outputFile' "$apk_dir/output-metadata.json")"
+adb shell 'run-as com.aistra.hail.debug mkdir -p files/v1'
+adb shell -T 'run-as com.aistra.hail.debug sh -c "cat > files/v1/apps.json"' <<'JSON'
+[{"package":"example.legacy.single","tag":0,"pinned":true},{"package":"example.legacy.multiple","tags":[0,-91],"whitelisted":true}]
+JSON
+adb shell -T 'run-as com.aistra.hail.debug sh -c "cat > files/v1/tags.json"' <<'JSON'
+[{"tag":"Default","id":0},{"tag":"Legacy","id":-91}]
+JSON
 adb shell dpm set-device-owner com.aistra.hail.debug/com.aistra.hail.receiver.DeviceAdminReceiver
 for name in one two; do
     cat > "$fixture_dir/AndroidManifest.xml" <<XML

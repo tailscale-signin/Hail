@@ -16,6 +16,7 @@ import com.aistra.hail.R
 import com.aistra.hail.app.*
 import com.aistra.hail.ui.main.MainActivity
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayInputStream
@@ -81,6 +82,16 @@ class BackupSettingsTest {
             instrumentation.runOnMainSync { install(original) }
             ctx.contentResolver.delete(uri, null, null)
         }
+    }
+
+    @Test fun existingSingleTagAndMultiTagListsSurviveUpgrade() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("hailCiFixtures") == "true")
+        val original = HailData.backupSnapshot()
+        assertTrue(original.apps.single { it.packageName == "example.legacy.single" }.pinned)
+        val multi = original.apps.single { it.packageName == "example.legacy.multiple" }
+        assertEquals(listOf(0, -91), multi.tagIdList)
+        assertTrue(multi.whitelisted)
+        assertTrue(("Legacy" to -91) in original.tags)
     }
 
     @Test fun invalidBackupsAndDeviceLocalSettings() {
