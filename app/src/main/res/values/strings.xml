@@ -65,6 +65,8 @@
     <string name="copy_details">Copy details</string>
     <string name="check_again">Check again</string>
     <string name="package_user_mode">Android user %1$d · Working mode %2$s</string>
+    <string name="package_shizuku_root">Shizuku is running as root (UID %1$d).</string>
+    <string name="package_shizuku_uid">Shizuku is running with UID %1$d (ADB shell uses 2000).</string>
     <string name="package_enabled">Android reports this app is enabled for this user.</string>
     <string name="package_until_used">Android can enable this app on first use. Choose Disable app to keep it disabled for this user.</string>
     <string name="package_disabled">Android reports this app is disabled for this user.</string>

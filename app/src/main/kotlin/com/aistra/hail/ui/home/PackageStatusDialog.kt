@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.aistra.hail.utils.HShizuku
 import com.aistra.hail.utils.PackageLookup
+import rikka.shizuku.Shizuku
 
 class PackageStatusDialog : DialogFragment() {
     companion object {
@@ -81,9 +82,11 @@ class PackageStatusDialog : DialogFragment() {
 
     private suspend fun render() {
         val mode = HailData.workingMode
+        val shizukuUid = if (mode.endsWith(HailData.DISABLE) && mode != HailData.MODE_SHIZUKU_DISABLE) null else
+            withContext(Dispatchers.IO) { if (HShizuku.isAuthorized()) runCatching { Shizuku.getUid() }.getOrNull() else null }
         val method = when {
             mode.endsWith(HailData.DISABLE) -> mode
-            withContext(Dispatchers.IO) { HShizuku.isAuthorized() } -> HailData.MODE_SHIZUKU_DISABLE
+            shizukuUid != null -> HailData.MODE_SHIZUKU_DISABLE
             else -> null
         }
         val record = withContext(Dispatchers.IO) { PackageLookup(method ?: mode).find(pkg) }
@@ -100,6 +103,7 @@ class PackageStatusDialog : DialogFragment() {
             null -> if (record == null) R.string.package_unknown_here else R.string.package_retained_here
         }
         binding.report.text = listOfNotNull(pkg, getString(R.string.package_user_mode, HPackages.myUserId, modeName),
+            shizukuUid?.let { getString(if (it == 0) R.string.package_shizuku_root else R.string.package_shizuku_uid, it) },
             getString(status), if (enabled != null && method == null) getString(R.string.package_native_guidance) else null,
             message).joinToString("\n\n")
         alert.getButton(DialogInterface.BUTTON_POSITIVE).isVisible = record != null
