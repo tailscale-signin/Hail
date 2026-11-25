@@ -22,10 +22,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ComposeView
@@ -83,8 +79,6 @@ class SettingsFragment : MainFragment(), MenuProvider {
     @Composable
     private fun SettingsScreen() {
         val autoFreezeAfterLock = rememberPreferenceState(HailData.AUTO_FREEZE_AFTER_LOCK, false)
-        var showAppShortcuts by rememberSaveable { mutableStateOf(false) }
-        if (showAppShortcuts) BulkShortcutDialog { showAppShortcuts = false }
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             listPreference(
                 key = HailData.WORKING_MODE,
@@ -256,7 +250,12 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 title = { Text(stringResource(R.string.add_all_app_shortcuts)) },
                 summary = { Text(stringResource(R.string.add_all_app_shortcuts_summary)) },
                 icon = { Icon(Icons.Outlined.Apps, contentDescription = null) },
-                onClick = { showAppShortcuts = true }
+                onClick = {
+                    val dialogs = childFragmentManager
+                    if (!dialogs.isStateSaved && dialogs.findFragmentByTag(BulkShortcutDialog.TAG) == null) {
+                        BulkShortcutDialog().showNow(dialogs, BulkShortcutDialog.TAG)
+                    }
+                }
             )
             listPreference(
                 key = HailData.DYNAMIC_SHORTCUT_ACTION,

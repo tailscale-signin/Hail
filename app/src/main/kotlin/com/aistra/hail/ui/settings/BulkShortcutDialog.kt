@@ -1,126 +1,168 @@
 package com.aistra.hail.ui.settings
 
+import android.app.Dialog
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.DialogInterface
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
-import androidx.compose.foundation.layout.Row
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalWindowInfo
-import androidx.compose.ui.res.stringResource
+import android.os.Bundle
+import android.view.ViewTreeObserver
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import androidx.core.os.BundleCompat
+import androidx.core.view.isVisible
+import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.compose.currentStateAsState
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.aistra.hail.R
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.HailData
 import com.aistra.hail.utils.HLog
 import com.aistra.hail.utils.HShortcuts
 import com.aistra.hail.utils.HTarget
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
-@Composable
-internal fun BulkShortcutDialog(onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val action = "${context.packageName}.SHORTCUT_PIN_RESULT"
-    val scheme = "hail-pin"
-    val supported = remember { HShortcuts.supportsPinning }
-    var batch by rememberSaveable { mutableStateOf(ShortcutBatch.from(HailData.checkedList.map { it.packageName })) }
-    val item = batch
-    val pkg = item.current
-    val active = supported && pkg != null
-
-    DisposableEffect(context) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                batch = batch.confirm(intent.data?.schemeSpecificPart)
-            }
-        }
-        val filter = IntentFilter(action).apply { addDataScheme(scheme) }
-        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
-        onDispose { context.unregisterReceiver(receiver) }
+class BulkShortcutDialog : DialogFragment() {
+    companion object {
+        const val TAG = "bulk_app_shortcuts"
+        private const val CALLBACK_SCHEME = "hail-pin"
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.add_all_app_shortcuts)) },
-        text = {
-            // Use the dialog window. The activity window also loses focus to this dialog.
-            val window = LocalWindowInfo.current
-            val lifecycle = LocalLifecycleOwner.current.lifecycle
-            val state by lifecycle.currentStateAsState()
-            LaunchedEffect(item, window.isWindowFocused, state) {
-                if (!active || item.failed || !window.isWindowFocused || state != Lifecycle.State.RESUMED) {
-                    return@LaunchedEffect
-                }
-                try {
-                    val reconciled = withContext(Dispatchers.IO) { item.reconcile(HShortcuts.pinnedIds()) }
-                    if (batch != item) return@LaunchedEffect
-                    if (reconciled != item) {
-                        batch = reconciled
-                        return@LaunchedEffect
-                    }
-                    if (item.requestId != null) return@LaunchedEffect
-                    val shortcut = withContext(Dispatchers.IO) { HShortcuts.appPinShortcut(AppInfo(checkNotNull(pkg))) }
-                    if (batch != item || !window.isWindowFocused || lifecycle.currentState != Lifecycle.State.RESUMED) {
-                        return@LaunchedEffect
-                    }
-                    val id = UUID.randomUUID().toString()
-                    val intent = Intent(action, Uri.fromParts(scheme, id, null)).setPackage(context.packageName)
-                    val callback = PendingIntent.getBroadcast(
-                        context, 0, intent, PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
-                    )
-                    batch = item.copy(requestId = id)
-                    if (!HShortcuts.requestPin(shortcut, callback.intentSender)) {
-                        callback.cancel()
-                        batch = item.copy(failed = true)
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: RuntimeException) {
-                    HLog.e(e)
-                    batch = item.copy(failed = true)
-                }
-            }
-
-            val message = when {
-                item.packages.isEmpty() -> stringResource(R.string.shortcut_batch_empty)
-                !supported -> stringResource(R.string.shortcut_batch_unsupported)
-                pkg != null -> {
-                    val label = remember(pkg) { AppInfo(pkg).name.toString().ifBlank { pkg } }
-                    val progress = stringResource(R.string.shortcut_batch_progress, label, item.position + 1, item.packages.size)
-                    val instruction = when {
-                        item.failed -> R.string.shortcut_batch_failed
-                        HTarget.O -> R.string.shortcut_batch_prompt
-                        else -> R.string.shortcut_batch_legacy
-                    }
-                    progress + "\n\n" + stringResource(instruction)
-                }
-                HTarget.O -> stringResource(R.string.shortcut_batch_result, item.added, item.existing, item.skipped)
-                else -> stringResource(R.string.shortcut_batch_legacy_result, item.added, item.skipped)
-            }
-            Text(message)
-        },
-        confirmButton = {
-            if (!active) TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.ok)) }
-            else if (item.requestId != null || item.failed) Row {
-                TextButton(onClick = { batch = batch.skip() }) { Text(stringResource(R.string.action_skip)) }
-                TextButton(onClick = { batch = batch.retry() }) { Text(stringResource(R.string.shortcut_batch_retry)) }
-            }
-        },
-        dismissButton = {
-            if (active) TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+    private lateinit var batch: MutableStateFlow<ShortcutBatch>
+    private val focused = MutableStateFlow(false)
+    private val onFocus = ViewTreeObserver.OnWindowFocusChangeListener { focused.value = it }
+    private val callbackAction get() = "${requireContext().packageName}.SHORTCUT_PIN_RESULT"
+    private val receiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            batch.update { it.confirm(intent.data?.schemeSpecificPart) }
         }
-    )
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val restored = savedInstanceState?.let { BundleCompat.getSerializable(it, TAG, ShortcutBatch::class.java) }
+        batch = MutableStateFlow(restored ?: ShortcutBatch.from(HailData.checkedList.map { it.packageName }))
+        val filter = IntentFilter(callbackAction).apply { addDataScheme(CALLBACK_SCHEME) }
+        ContextCompat.registerReceiver(requireContext(), receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                combine(batch, focused) { item, focus -> item to focus }.collectLatest { (item, focus) ->
+                    val supported = HShortcuts.supportsPinning
+                    render(item, supported)
+                    val pkg = item.current
+                    if (focus && supported && pkg != null && !item.failed) requestCurrent(item, pkg)
+                }
+            }
+        }
+    }
+
+    override fun onCreateDialog(savedInstanceState: Bundle?): Dialog =
+        MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.add_all_app_shortcuts)
+            .setMessage(" ").setPositiveButton(android.R.string.ok, null)
+            .setNegativeButton(android.R.string.cancel, null).setNeutralButton(R.string.action_skip, null).create()
+
+    override fun onStart() {
+        super.onStart()
+        val root = requireDialog().window!!.decorView
+        root.viewTreeObserver.addOnWindowFocusChangeListener(onFocus)
+        focused.value = root.hasWindowFocus()
+        render(batch.value, HShortcuts.supportsPinning)
+    }
+
+    override fun onStop() {
+        dialog?.window?.decorView?.viewTreeObserver?.removeOnWindowFocusChangeListener(onFocus)
+        focused.value = false
+        super.onStop()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putSerializable(TAG, batch.value)
+    }
+
+    override fun onDestroy() {
+        requireContext().unregisterReceiver(receiver)
+        super.onDestroy()
+    }
+
+    private fun stillCurrent(item: ShortcutBatch) = batch.value == item && isResumed &&
+            dialog?.window?.decorView?.hasWindowFocus() == true
+
+    private suspend fun requestCurrent(item: ShortcutBatch, pkg: String) {
+        var attempt = item
+        try {
+            val reconciled = withContext(Dispatchers.IO) { item.reconcile(HShortcuts.pinnedIds()) }
+            if (!stillCurrent(item)) return
+            if (reconciled != item) {
+                batch.value = reconciled
+                return
+            }
+            if (item.requestId != null) return
+            val shortcut = withContext(Dispatchers.IO) { HShortcuts.appPinShortcut(AppInfo(pkg)) }
+            if (!stillCurrent(item)) return
+            val id = UUID.randomUUID().toString()
+            val context = requireContext()
+            val intent = Intent(callbackAction, Uri.fromParts(CALLBACK_SCHEME, id, null)).setPackage(context.packageName)
+            val callback = PendingIntent.getBroadcast(
+                context, 0, intent, PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            )
+            attempt = item.copy(requestId = id)
+            batch.value = attempt
+            if (!HShortcuts.requestPin(shortcut, callback.intentSender)) {
+                callback.cancel()
+                batch.value = item.copy(failed = true)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RuntimeException) {
+            HLog.e(e)
+            batch.compareAndSet(attempt, item.copy(failed = true))
+        }
+    }
+
+    private fun render(item: ShortcutBatch, supported: Boolean) {
+        val alert = dialog as? AlertDialog ?: return
+        val active = supported && item.current != null
+        val recover = active && (item.requestId != null || item.failed)
+        alert.setMessage(message(item, supported))
+        alert.getButton(DialogInterface.BUTTON_POSITIVE).apply {
+            isVisible = !active || recover
+            setText(if (active) R.string.shortcut_batch_retry else android.R.string.ok)
+            setOnClickListener { if (active) batch.compareAndSet(item, item.retry()) else dismiss() }
+        }
+        alert.getButton(DialogInterface.BUTTON_NEUTRAL).apply {
+            isVisible = recover
+            setOnClickListener { batch.compareAndSet(item, item.skip()) }
+        }
+        alert.getButton(DialogInterface.BUTTON_NEGATIVE).isVisible = active
+    }
+
+    private fun message(item: ShortcutBatch, supported: Boolean): String {
+        if (item.packages.isEmpty()) return getString(R.string.shortcut_batch_empty)
+        if (!supported) return getString(R.string.shortcut_batch_unsupported)
+        val pkg = item.current ?: return if (HTarget.O) {
+            getString(R.string.shortcut_batch_result, item.added, item.existing, item.skipped)
+        } else getString(R.string.shortcut_batch_legacy_result, item.added, item.skipped)
+        val label = AppInfo(pkg).name.ifBlank { pkg }
+        val progress = getString(R.string.shortcut_batch_progress, label, item.position + 1, item.packages.size)
+        val instruction = when {
+            item.failed -> R.string.shortcut_batch_failed
+            HTarget.O -> R.string.shortcut_batch_prompt
+            else -> R.string.shortcut_batch_legacy
+        }
+        return progress + "\n\n" + getString(instruction)
+    }
 }
