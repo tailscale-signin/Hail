@@ -21,14 +21,20 @@ object HPolicy {
 
     val lockScreen get() = isAdminActive.also { if (it) dpm.lockNow() }
 
-    fun setAppHidden(packageName: String, hidden: Boolean): Boolean =
-        isDeviceOwnerActive && dpm.setApplicationHidden(admin, packageName, hidden)
+    fun setAppHidden(packageName: String, hidden: Boolean, trace: DecisionTrace? = null): Boolean {
+        val active = isDeviceOwnerActive
+        trace?.event("permission", packageName, "deviceOwnerActive" to active)
+        return active && dpm.setApplicationHidden(admin, packageName, hidden)
+    }
 
-    fun setSuspended(packages: List<String>, suspended: Boolean): Set<String> = try {
-        if (HTarget.N && isDeviceOwnerActive) {
+    fun setSuspended(packages: List<String>, suspended: Boolean, trace: DecisionTrace? = null): Set<String> = try {
+        val permitted = HTarget.N && isDeviceOwnerActive
+        trace?.event("policy_check", null, "deviceOwnerActiveAndSupported" to permitted)
+        if (permitted) {
             packages.toSet() - dpm.setPackagesSuspended(admin, packages.toTypedArray(), suspended).toSet()
         } else emptySet()
     } catch (e: RuntimeException) {
+        trace?.error("android_error", null, e)
         HLog.e(e)
         emptySet()
     }

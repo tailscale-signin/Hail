@@ -65,7 +65,13 @@
     <string name="copy_details">Copy details</string>
     <string name="check_again">Check again</string>
     <string name="package_user_mode">Android user %1$d · Working mode %2$s</string>
+    <string name="package_shizuku_root">Shizuku is running as root (UID %1$d).</string>
+    <string name="apply_full_disable">Apply full disable</string>
+    <string name="package_disabled_user">Android reports this app is disabled for this user. The selected mode can also apply the full disable setting.</string>
+    <string name="package_shizuku_uid">Shizuku is running with UID %1$d (ADB shell uses 2000).</string>
     <string name="package_enabled">Android reports this app is enabled for this user.</string>
+    <string name="package_until_used">Android can enable this app on first use.</string>
+    <string name="package_shell_refused">Android refused the ADB shell change for %1$s in its current state. Open App info to see which controls Android offers.</string>
     <string name="package_disabled">Android reports this app is disabled for this user.</string>
     <string name="package_unknown_here">Android could not find this package for this user.</string>
     <string name="package_retained_here">Android still has a record for this package. Current-profile queries could not confirm an installed app to disable. This can happen when a preinstalled app has been removed for this user.</string>
@@ -206,4 +212,10 @@
     <string name="already_unfrozen">%1$s already unfrozen</string>
     <string name="freeze_partial">%1$d changed · %2$d already in that state · %3$d unavailable · %4$d failed</string>
     <string name="stop_unfreeze">Launch the app to clear Android’s force-stop state.</string>
+    <string name="debug_mode">Debug mode</string>
+    <string name="debug_logging">Debug logging</string>
+    <string name="debug_logging_summary">Record Hail’s package decisions and Android responses on this device. The most recent 4 MiB are kept.</string>
+    <string name="debug_export">Export debug log</string>
+    <string name="debug_export_saved">Debug log saved</string>
+    <string name="debug_export_failed">Couldn’t save the debug log</string>
 </resources>

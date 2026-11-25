@@ -15,20 +15,37 @@ object HPackages {
     @Suppress("DEPRECATION")
     private const val INCLUDE_UNINSTALLED = PackageManager.GET_UNINSTALLED_PACKAGES
     @Suppress("DEPRECATION")
-    private const val INSTALLED_FOR_USER = PackageManager.GET_DISABLED_COMPONENTS
+    internal const val INSTALLED_FOR_USER = PackageManager.GET_DISABLED_COMPONENTS or PackageManager.GET_DISABLED_UNTIL_USED_COMPONENTS
 
-    data class UserPackage(val info: ApplicationInfo, val installed: Boolean)
+    data class UserPackage(val info: ApplicationInfo?, val installed: Boolean, val enabledSetting: Int? = null,
+                           val inferredSetting: Boolean = false) {
+        fun setting() = enabledSetting ?: info?.let { currentEnabledSetting(it.packageName) }
+
+        fun canDisable(setting: Int? = setting()): Boolean = when (setting) {
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER -> false
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> true
+            else -> info?.enabled == true
+        }
+    }
 
     private fun knownPackage(info: ApplicationInfo) = UserPackage(info, info.flags and ApplicationInfo.FLAG_INSTALLED != 0)
 
-    fun findForUser(pkg: String, listed: (String) -> UserPackage? = { packagesForUser()[it] }): UserPackage? {
-        getApplicationInfoOrNull(pkg, INSTALLED_FOR_USER)?.let { return UserPackage(it, true) }
+    fun findForUser(pkg: String, trace: DecisionTrace? = null, listed: (String) -> UserPackage? = { packagesForUser()[it] }): UserPackage? {
+        val direct = getApplicationInfoOrNull(pkg, INSTALLED_FOR_USER)
+        trace?.event("lookup", pkg, "reader" to "PackageManager installed", "found" to (direct != null))
+        if (direct != null) return UserPackage(direct, true)
         if (HTarget.O) {
             val installed = runCatching { app.getSystemService<LauncherApps>()?.getApplicationInfo(
                 pkg, INSTALLED_FOR_USER, android.os.Process.myUserHandle()) }.getOrNull()
+            trace?.event("lookup", pkg, "reader" to "LauncherApps", "found" to (installed != null))
             if (installed != null) return UserPackage(installed, true)
         }
-        return listed(pkg) ?: getApplicationInfoOrNull(pkg)?.let(::knownPackage)
+        val inventory = listed(pkg)
+        trace?.event("lookup", pkg, "reader" to "current-user inventory", "found" to (inventory != null))
+        if (inventory != null) return inventory
+        return getApplicationInfoOrNull(pkg)?.let(::knownPackage).also {
+            trace?.event("lookup", pkg, "reader" to "retained package metadata", "found" to (it != null))
+        }
     }
 
     /** One installed-only inventory for the calling profile, including disabled apps, plus retained package metadata. */
@@ -73,18 +90,8 @@ object HPackages {
     fun isSystemApp(info: ApplicationInfo): Boolean =
         info.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
 
-    fun isEnabledForUser(info: ApplicationInfo): Boolean = runCatching {
-        when (app.packageManager.getApplicationEnabledSetting(info.packageName)) {
-            PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> true
-            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-            PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER,
-            PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> false
-            else -> info.enabled
-        }
-    }.getOrDefault(info.enabled)
-
-    fun hasRequestedEnabledSetting(packageName: String, disabled: Boolean): Boolean =
-        findForUser(packageName)?.takeIf { it.installed }?.let { isEnabledForUser(it.info) == !disabled } == true
+    fun currentEnabledSetting(pkg: String): Int? =
+        runCatching { app.packageManager.getApplicationEnabledSetting(pkg) }.getOrNull()
 
     private val privateFlags by lazy { runCatching { ApplicationInfo::class.java.getField("privateFlags") }.getOrNull() }
     fun isHidden(info: ApplicationInfo): Boolean = runCatching { (privateFlags?.getInt(info) ?: 0) and 1 != 0 }.getOrDefault(false)
@@ -108,21 +115,33 @@ object HPackages {
     fun canUninstallNormally(packageName: String): Boolean =
         getApplicationInfoOrNull(packageName)?.sourceDir?.startsWith("/data") ?: false
 
-    fun forceStopApp(packageName: String): Boolean = runCatching {
+    fun forceStopApp(packageName: String, trace: DecisionTrace? = null): Boolean = runCatching {
         app.getSystemService<ActivityManager>()!!.let {
             if (HTarget.P) HiddenApiBypass.invoke(it::class.java, it, "forceStopPackage", packageName)
             else it::class.java.getMethod("forceStopPackage", String::class.java).invoke(it, packageName)
         }
         true
     }.getOrElse {
+        trace?.error("force_stop_failed", packageName, it)
         HLog.e(it)
         false
     }
 
-    fun setAppDisabled(packageName: String, disabled: Boolean): Boolean {
-        val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+    fun setAppDisabled(packageName: String, disabled: Boolean, trace: DecisionTrace? = null): Boolean {
+        val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        trace?.event("permission", packageName, "appUid" to android.os.Process.myUid(),
+            "permission" to "CHANGE_COMPONENT_ENABLED_STATE", "granted" to
+                (app.checkSelfPermission("android.permission.CHANGE_COMPONENT_ENABLED_STATE") == PackageManager.PERMISSION_GRANTED))
+        if (disabled) {
+            val permitted = app.checkSelfPermission("android.permission.FORCE_STOP_PACKAGES") == PackageManager.PERMISSION_GRANTED
+            val stopped = if (permitted) forceStopApp(packageName, trace) else null
+            trace?.event("force_stop", packageName, "permitted" to permitted, "succeeded" to stopped)
+        }
+        trace?.event("android_call", packageName, "method" to "PackageManager.setApplicationEnabledSetting", "requestedSetting" to newState)
         app.packageManager.setApplicationEnabledSetting(packageName, newState, 0)
-        return hasRequestedEnabledSetting(packageName, disabled)
+        val actual = app.packageManager.getApplicationEnabledSetting(packageName)
+        trace?.event("readback", packageName, "reader" to "PackageManager", "observedSetting" to actual, "verified" to (actual == newState))
+        return actual == newState
     }
 
     @RequiresApi(Build.VERSION_CODES.P)

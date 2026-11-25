@@ -23,6 +23,7 @@ import com.aistra.hail.app.HailData
 import com.aistra.hail.databinding.FragmentAppsBinding
 import com.aistra.hail.extensions.*
 import com.aistra.hail.ui.main.MainFragment
+import com.aistra.hail.utils.DecisionLog
 import com.aistra.hail.utils.HFiles
 import com.aistra.hail.utils.HPackages
 import com.aistra.hail.utils.HPolicy
@@ -173,14 +174,17 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
 
     private fun changeSystemAppEnabled(info: ApplicationInfo) {
         val pkg = info.packageName
-        if (!HailData.workingMode.endsWith(HailData.DISABLE)) {
+        val mode = HailData.workingMode
+        val disable = contextTargetDisabled
+        val trace = DecisionLog.change("apps_menu", disable, mode, pkg)
+        if (!mode.endsWith(HailData.DISABLE)) {
+            trace?.event("android_settings", pkg, "reason" to "Selected mode delegates enable and disable to Android Settings")
             openAppInfo(pkg)
             return
         }
         // The action was labelled from this snapshot. Repeating it must never reverse a newer change.
-        val disable = contextTargetDisabled
         viewLifecycleOwner.lifecycleScope.launch {
-            val result = AppManager.changeFrozen(listOf(pkg), disable)
+            val result = AppManager.changeFrozen(listOf(pkg), disable, mode = mode, trace = trace)
             when {
                 result.reachedTarget(pkg) -> HUI.showToast(AppManager.resultMessage(result, disable))
                 pkg in result.missing -> HUI.showToast(R.string.app_not_installed)

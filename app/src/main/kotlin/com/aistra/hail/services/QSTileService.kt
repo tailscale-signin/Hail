@@ -37,7 +37,7 @@ class QSTileService : TileService() {
                 HailData.ACTION_LOCK_FREEZE -> HailApi.ACTION_LOCK_FREEZE
                 else -> HailApi.ACTION_UNFREEZE_ALL
             }
-        ).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ).putExtra(HailApi.EXTRA_ORIGIN, HailApi.TILE).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (HTarget.U) startActivityAndCollapse(
             PendingIntent.getActivity(
                 this, 0, intent, PendingIntent.FLAG_IMMUTABLE

@@ -12,7 +12,8 @@ object HShell {
     fun execute(command: String, root: Boolean): Pair<Int, String?> = runCatching {
         ProcessBuilder(if (root) "su" else "sh").redirectErrorStream(true).start().run {
             outputStream.use { it.write(command.toByteArray()) }
-            waitFor() to inputStream.bufferedReader().use { it.readText() }.also { destroy() }
+            val output = inputStream.bufferedReader().use { it.readText() }
+            waitFor() to output
         }
     }.getOrElse { 1 to it.stackTraceToString() }
 
@@ -22,19 +23,51 @@ object HShell {
 
     val lockScreen get() = execSU("input keyevent KEYCODE_POWER").first == 0
 
-    fun forceStopApp(packageName: String): Boolean = execSU("am force-stop $userArg $packageName").first == 0
-
-    fun setAppDisabled(packageName: String, disabled: Boolean): Boolean {
-        val (code, output) = execSU("pm ${if (disabled) "disable-user" else "enable"} --user ${HPackages.myUserId} $packageName")
-        if (code != 0) throw IllegalStateException(output?.trim()?.takeIf { it.isNotEmpty() } ?: "pm ($code)")
-        return HPackages.hasRequestedEnabledSetting(packageName, disabled)
+    private fun packageCommand(command: String, pkg: String, trace: DecisionTrace?): Boolean {
+        val (code, message) = execSU(command)
+        trace?.event("root_response", pkg, "exitCode" to code,
+            "error" to if (code == 0) null else message?.lineSequence()?.firstOrNull())
+        return code == 0
     }
 
-    fun setAppHidden(packageName: String, hidden: Boolean): Boolean =
-        execSU("pm ${if (hidden) "hide" else "unhide"} $userArg $packageName").first == 0
+    fun forceStopApp(packageName: String, trace: DecisionTrace? = null): Boolean =
+        packageCommand("am force-stop $userArg $packageName", packageName, trace)
 
-    fun setAppSuspended(packageName: String, suspended: Boolean): Boolean =
-        execSU("pm ${if (suspended) "suspend" else "unsuspend"} $userArg $packageName").first == 0
+    /** Query once per batch as the same root identity and Android user that will perform the write. */
+    fun installedEnabledStates(trace: DecisionTrace? = null): Map<String, Boolean>? {
+        val user = HPackages.myUserId
+        val (code, output) = execSU("pm list packages --user $user && echo HAIL_DISABLED && pm list packages -d --user $user")
+        trace?.event("root_inventory", null, "user" to user, "exitCode" to code)
+        if (code != 0 || output == null) return null
+        val sections = output.lineSequence().map(String::trim).toList()
+        val separator = sections.indexOf("HAIL_DISABLED")
+        if (separator < 0) return null
+        return buildMap {
+            sections.forEachIndexed { index, line ->
+                if (line.startsWith("package:")) put(line.removePrefix("package:"), index < separator)
+            }
+        }
+    }
+
+    fun setAppDisabled(packageName: String, disabled: Boolean, trace: DecisionTrace? = null): Boolean {
+        val pkg = "'" + packageName.replace("'", "'\\''") + "'"
+        val user = HPackages.myUserId
+        val change = if (disabled) "disable" else "enable"
+        val filter = if (disabled) "-d" else "-e"
+        trace?.event("android_call", packageName, "method" to "root pm $change", "user" to user)
+        val (code, output) = execSU("pm $change --user $user $pkg && pm list packages $filter --user $user $pkg")
+        if (code != 0) throw IllegalStateException(output?.trim()?.takeIf { it.isNotEmpty() } ?: "pm ($code)")
+        val verified = output?.lineSequence()?.any { it.trim() == "package:$packageName" } == true
+        trace?.event("readback", packageName, "reader" to "root pm list packages $filter", "exitCode" to code,
+            "settingReader" to "local PackageManager", "observedSetting" to HPackages.currentEnabledSetting(packageName), "verified" to verified)
+        return verified
+    }
+
+    fun setAppHidden(packageName: String, hidden: Boolean, trace: DecisionTrace? = null): Boolean =
+        packageCommand("pm ${if (hidden) "hide" else "unhide"} $userArg $packageName", packageName, trace)
+
+    fun setAppSuspended(packageName: String, suspended: Boolean, trace: DecisionTrace? = null): Boolean =
+        packageCommand("pm ${if (suspended) "suspend" else "unsuspend"} $userArg $packageName", packageName, trace)
 
     fun uninstallApp(packageName: String) = execSU(
         "pm ${if (HPackages.canUninstallNormally(packageName)) "uninstall" else "uninstall $userArg"} $packageName"

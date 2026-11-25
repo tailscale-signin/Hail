@@ -27,6 +27,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.MutableState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -79,6 +81,10 @@ class SettingsFragment : MainFragment(), MenuProvider {
         it?.let { uri -> backups.open(uri, restore = true) }
     }
 
+    private val saveDebugLog = registerForActivityResult(ActivityResultContracts.CreateDocument("application/x-ndjson")) { uri ->
+        if (uri != null) app.exportDebugLog(uri)
+    }
+
     private val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -129,6 +135,20 @@ class SettingsFragment : MainFragment(), MenuProvider {
             preference(key = "backup_restore", title = { Text(stringResource(R.string.backup_restore)) },
                 icon = { Icon(Icons.Outlined.Restore, contentDescription = null) },
                 onClick = { loadBackup.launch(arrayOf("application/json", "text/*", "application/octet-stream")) })
+            horizontalDivider()
+            preferenceCategory(key = "debug", title = { Text(stringResource(R.string.debug_mode)) })
+            item(key = DecisionLog.PREF) {
+                val recording = remember { mutableStateOf(DecisionLog.enabled) }
+                SwitchPreference(value = recording.value, onValueChange = {
+                    DecisionLog.setEnabled(it)
+                    recording.value = it
+                }, title = { Text(stringResource(R.string.debug_logging)) },
+                    summary = { Text(stringResource(R.string.debug_logging_summary)) },
+                    icon = { Icon(Icons.Outlined.BugReport, contentDescription = null) })
+            }
+            preference(key = "export_debug_log", title = { Text(stringResource(R.string.debug_export)) },
+                icon = { Icon(Icons.Outlined.SaveAlt, contentDescription = null) },
+                onClick = { saveDebugLog.launch(DecisionLog.suggestedName()) })
             horizontalDivider()
             preferenceCategory(key = "customize", title = { Text(text = stringResource(R.string.title_customize)) })
             listPreference(
@@ -523,6 +543,12 @@ class SettingsFragment : MainFragment(), MenuProvider {
     }
 
     fun onWorkingModeChange(rememberState: MutableState<String>, mode: String): Boolean {
+        val trace = DecisionLog.begin("settings", "select_mode", mode)
+        trace?.event("mode_requested", null, "previousMode" to HailData.workingMode)
+        fun decision(accepted: Boolean, reason: String): Boolean {
+            trace?.event("mode_decision", null, "accepted" to accepted, "reason" to reason)
+            return accepted
+        }
         // Show/hide terminal menu.
         activity.invalidateOptionsMenu()
         when {
@@ -532,13 +558,13 @@ class SettingsFragment : MainFragment(), MenuProvider {
                     .setPositiveButton(android.R.string.ok, null)
                     .setNeutralButton(android.R.string.copy) { _, _ -> HUI.copyText(HPolicy.ADB_COMMAND) }.show()
                     .findViewById<MaterialTextView>(android.R.id.message)?.setTextIsSelectable(true)
-                return false
+                return decision(false, "Device owner is inactive")
             }
 
             mode.startsWith(HailData.DHIZUKU) -> return runCatching {
                 Dhizuku.init(app)
                 when {
-                    Dhizuku.isPermissionGranted() -> true
+                    Dhizuku.isPermissionGranted() -> decision(true, "Dhizuku permission granted")
                     else -> {
                         lifecycleScope.launch {
                             val result = callbackFlow {
@@ -549,15 +575,17 @@ class SettingsFragment : MainFragment(), MenuProvider {
                                 })
                                 awaitClose()
                             }.first()
+                            decision(result, "Dhizuku permission response")
                             if (result) {
                                 rememberState.value = mode
                                 if (HTarget.O) HDhizuku.setDelegatedScopes()
                             }
                         }
-                        false
+                        decision(false, "Waiting for Dhizuku permission")
                     }
                 }
             }.getOrElse {
+                trace?.error("mode_check_failed", null, it)
                 HLog.e(it)
                 HUI.showToast(R.string.permission_denied)
                 false
@@ -565,7 +593,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
 
             mode.startsWith(HailData.SU) -> if (!HShell.checkSU) {
                 HUI.showToast(R.string.permission_denied)
-                return false
+                return decision(false, "Root shell unavailable")
             }
 
             mode == HailData.MODE_JAILBREAK_DISABLE -> if (
@@ -576,16 +604,16 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 && !HShell.grantPermission(requireContext().packageName, CHANGE_COMPONENT_ENABLED_STATE)
             ) {
                 HUI.showToast(R.string.permission_denied)
-                return false
+                return decision(false, "CHANGE_COMPONENT_ENABLED_STATE unavailable")
             }
 
             mode.startsWith(HailData.SHIZUKU) -> return runCatching {
                 when {
                     Shizuku.isPreV11() -> throw IllegalStateException("unsupported shizuku version")
-                    Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED -> true
+                    Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED -> decision(true, "Shizuku permission granted")
                     Shizuku.shouldShowRequestPermissionRationale() -> {
                         HUI.showToast(R.string.permission_denied)
-                        false
+                        decision(false, "Shizuku permission denied")
                     }
 
                     else -> {
@@ -602,12 +630,14 @@ class SettingsFragment : MainFragment(), MenuProvider {
                                     Shizuku.removeRequestPermissionResultListener(listener)
                                 }
                             }.first()
+                            decision(result, "Shizuku permission response")
                             if (result) rememberState.value = mode
                         }
-                        false
+                        decision(false, "Waiting for Shizuku permission")
                     }
                 }
             }.getOrElse {
+                trace?.error("mode_check_failed", null, it)
                 HLog.e(it)
                 HUI.showToast(R.string.shizuku_missing)
                 false
@@ -615,8 +645,8 @@ class SettingsFragment : MainFragment(), MenuProvider {
 
             mode.startsWith(HailData.ISLAND) -> return runCatching {
                 when {
-                    mode == HailData.MODE_ISLAND_HIDE && HIsland.freezePermissionGranted() -> true
-                    mode == HailData.MODE_ISLAND_SUSPEND && HIsland.suspendPermissionGranted() -> true
+                    mode == HailData.MODE_ISLAND_HIDE && HIsland.freezePermissionGranted() -> decision(true, "Island freeze permission granted")
+                    mode == HailData.MODE_ISLAND_SUSPEND && HIsland.suspendPermissionGranted() -> decision(true, "Island suspend permission granted")
                     else -> {
                         lifecycleScope.launch {
                             requestPermissionLauncher.launch(
@@ -624,10 +654,11 @@ class SettingsFragment : MainFragment(), MenuProvider {
                                 else HIsland.PERMISSION_SUSPEND_PACKAGE
                             )
                         }
-                        false
+                        decision(false, "Waiting for Island permission")
                     }
                 }
             }.getOrElse {
+                trace?.error("mode_check_failed", null, it)
                 HLog.e(it)
                 HUI.showToast(R.string.permission_denied)
                 false
@@ -642,12 +673,12 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 if (ContextCompat.checkSelfPermission(requireContext(), permission) != PackageManager.PERMISSION_GRANTED) {
                     MaterialAlertDialogBuilder(requireContext()).setMessage(R.string.privileged_mode_permission)
                         .setPositiveButton(android.R.string.ok, null).show()
-                    return false
+                    return decision(false, "Required Android permission denied")
                 }
             }
         }
 
-        return true
+        return decision(true, "Selected mode is available")
     }
 
     private suspend fun onTerminalResult(exitValue: Int, msg: String?) = withContext(Dispatchers.Main) {

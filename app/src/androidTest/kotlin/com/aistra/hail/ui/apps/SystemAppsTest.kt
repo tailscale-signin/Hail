@@ -27,6 +27,7 @@ import com.aistra.hail.ui.main.MainActivity
 import com.aistra.hail.ui.home.HomeRow
 import com.aistra.hail.ui.home.PagerAdapter
 import com.aistra.hail.utils.HPackages
+import com.aistra.hail.utils.HShizuku
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
@@ -142,12 +143,16 @@ class SystemAppsTest {
                 }
                 waitFor("Hail saved the authorized Shizuku mode") { HailData.workingMode == HailData.MODE_SHIZUKU_DISABLE }
                 assertEquals(2000, Shizuku.getUid())
+                val packageService = HShizuku.Packages()
+                assertTrue(packageService.installed().any { it.packageName == pkg })
+                assertEquals(true, packageService.find(pkg)?.installed)
                 runBlocking {
                     for (disable in listOf(true, false)) {
                         val result = AppManager.changeFrozen(listOf(pkg), disable)
                         assertEquals(AppManager.resultMessage(result, disable), setOf(pkg), result.changed)
                         val expected = if (disable) PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                         assertEquals(expected, pm.getApplicationEnabledSetting(pkg))
+                        assertEquals(expected, packageService.setting(pkg))
                     }
                 }
                 await(By.res(ctx.packageName, "nav_apps")).click()

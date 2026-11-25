@@ -7,6 +7,7 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.aistra.hail.HailApp
 import com.aistra.hail.app.AppManager
+import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.HailData
 import com.aistra.hail.utils.*
 import java.text.Collator
@@ -46,7 +47,7 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
         filterJob?.cancel()
         isRefreshing.value = true
         loadJob = viewModelScope.launch {
-            applications = withContext(Dispatchers.IO) { HPackages.packagesForUser().values }
+            applications = withContext(Dispatchers.IO) { PackageLookup(HailData.workingMode).all().values }
             updateDisplayAppList()
         }
     }
@@ -68,10 +69,10 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
             val filtered = withContext(Dispatchers.IO) {
                 val rows = source.mapNotNull { record ->
                     ensureActive()
-                    val info = record.info
+                    val info = record.info ?: return@mapNotNull null
                     val pkg = info.packageName
                     if (!(if (HPackages.isSystemApp(info)) system else users)) return@mapNotNull null
-                    val frozen = AppManager.isAppFrozen(info, mode)
+                    val frozen = AppManager.state(record, mode) == AppInfo.State.FROZEN
                     if (!(if (frozen) frozenApps else unfrozenApps)) return@mapNotNull null
                     val label = info.loadLabel(pm).toString()
                     if (search.isNotEmpty() && !(nineKey && NineKeySearch.search(search, pkg, label))

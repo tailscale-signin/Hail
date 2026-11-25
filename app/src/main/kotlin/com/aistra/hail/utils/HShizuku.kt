@@ -3,6 +3,7 @@ package com.aistra.hail.utils
 import android.annotation.SuppressLint
 import android.app.AppOpsManager
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
@@ -49,7 +50,7 @@ object HShizuku {
             false
         }
 
-    fun forceStopApp(packageName: String): Boolean = runCatching {
+    fun forceStopApp(packageName: String, trace: DecisionTrace? = null): Boolean = runCatching {
         asInterface("android.app.IActivityManager", Context.ACTIVITY_SERVICE).let {
             if (HTarget.P) HiddenApiBypass.invoke(
                 it::class.java, it, "forceStopPackage", packageName, HPackages.myUserId
@@ -61,42 +62,104 @@ object HShizuku {
         }
         true
     }.getOrElse {
+        trace?.error("force_stop_failed", packageName, it)
         HLog.e(it)
         false
     }
 
-    fun setAppDisabled(packageName: String, disabled: Boolean): Boolean {
-        val pm = asInterface("android.content.pm.IPackageManager", "package")
-        val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-        pm::class.java.getMethod(
-            "setApplicationEnabledSetting",
-            String::class.java,
-            Int::class.java,
-            Int::class.java,
-            Int::class.java,
-            String::class.java
-        ).invoke(pm, packageName, newState, 0, HPackages.myUserId, callerPackage)
-        return HPackages.hasRequestedEnabledSetting(packageName, disabled)
+    fun isAuthorized(trace: DecisionTrace? = null) = runCatching {
+        val connected = Shizuku.pingBinder()
+        val granted = connected && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        trace?.event("permission", null, "service" to "Shizuku", "binderAlive" to connected,
+            "granted" to granted, "serviceUid" to if (granted) runCatching { Shizuku.getUid() }.getOrNull() else null)
+        granted
+    }.onFailure { trace?.error("permission_check_failed", null, it) }.getOrDefault(false)
+
+    class Packages {
+        private val pm = asInterface("android.content.pm.IPackageManager", "package")
+        private val flagType = if (HTarget.T) Long::class.javaPrimitiveType!! else Int::class.javaPrimitiveType!!
+        // Installed for this user, including apps with disabled launcher components.
+        private val flags: Any = if (HTarget.T) HPackages.INSTALLED_FOR_USER.toLong() else HPackages.INSTALLED_FOR_USER
+        private val user = HPackages.myUserId
+        private val getSetting by lazy { pm.javaClass.getMethod("getApplicationEnabledSetting", String::class.java, Int::class.java) }
+        val disableSetting by lazy {
+            if (isRoot) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+        }
+
+        fun setting(pkg: String) = getSetting.invoke(pm, pkg, user) as Int
+
+        fun find(pkg: String): HPackages.UserPackage? {
+            val result = if (HTarget.P) HiddenApiBypass.invoke(pm.javaClass, pm, "getApplicationInfo", pkg, flags, user)
+            else pm.javaClass.getMethod("getApplicationInfo", String::class.java, flagType, Int::class.java)
+                .invoke(pm, pkg, flags, user)
+            val info = result as? ApplicationInfo ?: return null
+            return HPackages.UserPackage(info, true, setting(pkg))
+        }
+
+        fun installed(): List<ApplicationInfo> {
+            val entries = if (HTarget.P) {
+                val slice = HiddenApiBypass.invoke(pm.javaClass, pm, "getInstalledApplications", flags, user)
+                HiddenApiBypass.invoke(Class.forName("android.content.pm.BaseParceledListSlice"), slice, "getList")
+            } else {
+                val slice = pm.javaClass.getMethod("getInstalledApplications", flagType, Int::class.java).invoke(pm, flags, user)
+                slice.javaClass.getMethod("getList").invoke(slice)
+            }
+            return (entries as List<*>).filterIsInstance<ApplicationInfo>()
+        }
+
+        fun setDisabled(packageName: String, disabled: Boolean, trace: DecisionTrace? = null): Boolean {
+            val newState = if (disabled) disableSetting else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            if (disabled) {
+                val stopped = forceStopApp(packageName, trace)
+                trace?.event("force_stop", packageName, "succeeded" to stopped)
+            }
+            trace?.event("android_call", packageName, "method" to "IPackageManager.setApplicationEnabledSetting",
+                "requestedSetting" to newState, "callingPackage" to BuildConfig.APPLICATION_ID, "user" to user)
+            pm.javaClass.getMethod(
+                "setApplicationEnabledSetting", String::class.java, Int::class.java, Int::class.java,
+                Int::class.java, String::class.java
+            ).invoke(pm, packageName, newState, 0, user, BuildConfig.APPLICATION_ID)
+            val actual = setting(packageName)
+            trace?.event("readback", packageName, "reader" to "Shizuku IPackageManager", "observedSetting" to actual,
+                "verified" to (actual == newState))
+            return actual == newState
+        }
     }
 
-    fun setAppHidden(packageName: String, hidden: Boolean): Boolean {
-        HPackages.getApplicationInfoOrNull(packageName) ?: return false
-        if (hidden) forceStopApp(packageName)
+    fun setAppHidden(packageName: String, hidden: Boolean, trace: DecisionTrace? = null): Boolean {
+        if (HPackages.getApplicationInfoOrNull(packageName) == null) {
+            trace?.skipped(packageName, "Backend requires application metadata")
+            return false
+        }
+        if (hidden) {
+            val stopped = forceStopApp(packageName, trace)
+            trace?.event("force_stop", packageName, "succeeded" to stopped)
+        }
         return runCatching {
             val pm = asInterface("android.content.pm.IPackageManager", "package")
             pm::class.java.getMethod(
                 "setApplicationHiddenSettingAsUser", String::class.java, Boolean::class.java, Int::class.java
             ).invoke(pm, packageName, hidden, HPackages.myUserId) as Boolean
         }.getOrElse {
+            trace?.error("android_error", packageName, it)
             HLog.e(it)
             false
         }
     }
 
-    fun setAppSuspended(packageName: String, suspended: Boolean): Boolean {
-        HPackages.getApplicationInfoOrNull(packageName) ?: return false
-        if (HTarget.P) setAppRestricted(packageName, suspended)
-        if (suspended) forceStopApp(packageName)
+    fun setAppSuspended(packageName: String, suspended: Boolean, trace: DecisionTrace? = null): Boolean {
+        if (HPackages.getApplicationInfoOrNull(packageName) == null) {
+            trace?.skipped(packageName, "Backend requires application metadata")
+            return false
+        }
+        if (HTarget.P) {
+            val restricted = setAppRestricted(packageName, suspended)
+            trace?.event("background_restriction", packageName, "requested" to suspended, "accepted" to restricted)
+        }
+        if (suspended) {
+            val stopped = forceStopApp(packageName, trace)
+            trace?.event("force_stop", packageName, "succeeded" to stopped)
+        }
         return runCatching {
             val pm = asInterface("android.content.pm.IPackageManager", "package")
             (when {
@@ -136,6 +199,7 @@ object HShizuku {
                 else -> return false
             } as Array<*>).isEmpty()
         }.getOrElse {
+            trace?.error("android_error", packageName, it)
             HLog.e(it)
             false
         }

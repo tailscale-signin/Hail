@@ -13,6 +13,7 @@ on:
       - '!.github/workflows/android.yml'
       - '!.github/scripts/test-device-actions.sh'
       - '!.github/scripts/check-device-results.py'
+      - '!.github/scripts/check-decision-log.py'
 
 permissions:
   contents: read

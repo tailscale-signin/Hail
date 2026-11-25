@@ -59,8 +59,11 @@ object HIsland {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun setAppFrozen(packageName: String, action: String): Boolean {
-        if (ownerApp == null) return false
+    private fun setAppFrozen(packageName: String, action: String, trace: DecisionTrace?): Boolean {
+        if (ownerApp == null) {
+            trace?.skipped(packageName, "Island profile owner is unavailable")
+            return false
+        }
         val intent = Intent(action).apply {
             data = Uri.fromParts("package", packageName, null)
             setPackage(ownerApp)
@@ -76,6 +79,7 @@ object HIsland {
                     if (resultCode != Activity.RESULT_OK) {
                         HLog.i("HIsland", resultData)
                     }
+                    trace?.event("island_response", packageName, "resultCode" to resultCode)
                     result.complete(resultCode == Activity.RESULT_OK)
                 }
             }, handler, Activity.RESULT_OK, null, null
@@ -83,13 +87,13 @@ object HIsland {
         return runBlocking {
             runCatching {
                 withTimeout(500.milliseconds) { result.await() }
-            }.getOrElse { false }
+            }.onFailure { trace?.error("island_response_failed", packageName, it) }.getOrDefault(false)
         }
     }
 
-    fun setAppHidden(packageName: String, hidden: Boolean): Boolean =
-        HTarget.N && setAppFrozen(packageName, if (hidden) ACTION_FREEZE else ACTION_UNFREEZE)
+    fun setAppHidden(packageName: String, hidden: Boolean, trace: DecisionTrace? = null): Boolean =
+        HTarget.N && setAppFrozen(packageName, if (hidden) ACTION_FREEZE else ACTION_UNFREEZE, trace)
 
-    fun setAppSuspended(packageName: String, suspended: Boolean): Boolean =
-        HTarget.N && setAppFrozen(packageName, if (suspended) ACTION_SUSPEND else ACTION_UNSUSPEND)
+    fun setAppSuspended(packageName: String, suspended: Boolean, trace: DecisionTrace? = null): Boolean =
+        HTarget.N && setAppFrozen(packageName, if (suspended) ACTION_SUSPEND else ACTION_UNSUSPEND, trace)
 }

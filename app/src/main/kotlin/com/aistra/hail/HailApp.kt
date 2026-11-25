@@ -5,6 +5,7 @@ import android.app.UiModeManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.content.pm.PackageManager
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
@@ -17,6 +18,8 @@ import com.aistra.hail.utils.HTarget
 import com.aistra.hail.utils.HPackages
 import com.aistra.hail.utils.HShortcuts
 import com.aistra.hail.utils.HLog
+import com.aistra.hail.utils.DecisionLog
+import com.aistra.hail.utils.HUI
 import kotlinx.coroutines.*
 
 class HailApp : Application() {
@@ -32,6 +35,20 @@ class HailApp : Application() {
     private val shortcutDispatcher = Dispatchers.IO.limitedParallelism(1)
     private var serviceUpdate: Job? = null
     private var lastServiceState: Pair<Boolean, Boolean>? = null
+
+    fun exportDebugLog(uri: Uri) {
+        appScope.launch {
+            try {
+                DecisionLog.export(uri)
+                HUI.showToast(R.string.debug_export_saved)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                HLog.e(e)
+                HUI.showToast(R.string.debug_export_failed)
+            }
+        }
+    }
 
     fun recordLaunch(pkg: String) {
         appScope.launch(shortcutDispatcher) {
