@@ -21,6 +21,7 @@ android {
 
     defaultConfig {
         applicationId = "com.aistra.hail"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 23
         targetSdk = 37
         versionCode = 36
@@ -67,9 +68,8 @@ android {
 }
 androidComponents {
     onVariants { variant ->
-        variant.outputs.forEach {
-            if (it is com.android.build.api.variant.impl.VariantOutputImpl)
-                it.outputFileName = "Hail-v${it.versionName.get()}.apk"
+        variant.outputs.forEach { output ->
+            output.outputFileName.set(output.versionName.map { "Hail-v${it}.apk" })
         }
     }
 }
@@ -113,4 +113,7 @@ dependencies {
     implementation(libs.hiddenapibypass)
     compileOnly(libs.libxposed.api)
     testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.uiautomator)
 }
