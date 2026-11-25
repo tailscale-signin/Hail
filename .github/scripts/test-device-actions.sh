@@ -54,7 +54,16 @@ XML
     "$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture "$fixture_dir/$name.apk"
     adb install -r "$fixture_dir/$name.apk"
 done
-classes=com.aistra.hail.app.DeviceFreezeTest,com.aistra.hail.ui.settings.BackupSettingsTest,com.aistra.hail.ui.settings.BulkShortcutLauncherTest
+# Exercise the same shell-backed Shizuku release and consent screen used on an unrooted phone.
+shizuku_apk="$fixture_dir/shizuku.apk"
+curl --fail --location --silent --show-error --retry 3 -o "$shizuku_apk" \
+    https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk
+echo "6e273ab0e991c4e79bc8b1bbb9b9dd739ccac1a8712a541a214078886b7b790f  $shizuku_apk" | sha256sum -c -
+adb install "$shizuku_apk"
+shizuku_dir="$(adb shell pm path moe.shizuku.privileged.api | tr -d '\r' | sed -n 's|^package:\(.*\)/base.apk$|\1|p')"
+test -n "$shizuku_dir"
+adb shell "$shizuku_dir/lib/x86_64/libshizuku.so"
+classes=com.aistra.hail.app.DeviceFreezeTest,com.aistra.hail.ui.settings.BackupSettingsTest,com.aistra.hail.ui.settings.BulkShortcutLauncherTest,com.aistra.hail.ui.apps.SystemAppsTest
 timeout 7m adb shell am instrument -w -r -e class "$classes" -e hailCiFixtures true \
     com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "$report/runner.txt"
 adb logcat -d -s HailTiming:I > "$report/timings.txt"

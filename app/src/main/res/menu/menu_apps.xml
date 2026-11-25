@@ -9,6 +9,7 @@
             app:showAsAction="always|collapseActionView"
             tools:ignore="AlwaysShowAction"/>
     <item
+            android:id="@+id/action_apps_filter"
             android:icon="@drawable/ic_outline_filter"
             android:title="@string/filter_by"
             app:showAsAction="ifRoom">

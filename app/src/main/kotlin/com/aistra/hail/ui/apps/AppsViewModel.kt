@@ -69,7 +69,7 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
                 val rows = source.mapNotNull { info ->
                     ensureActive()
                     val pkg = info.packageName
-                    if (!(if (info.flags and ApplicationInfo.FLAG_SYSTEM != 0) system else users)) return@mapNotNull null
+                    if (!(if (HPackages.isSystemApp(info)) system else users)) return@mapNotNull null
                     val frozen = AppManager.isAppFrozen(info, mode)
                     if (!(if (frozen) frozenApps else unfrozenApps)) return@mapNotNull null
                     val label = info.loadLabel(pm).toString()

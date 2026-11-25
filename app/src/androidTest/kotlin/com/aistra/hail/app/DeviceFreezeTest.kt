@@ -38,7 +38,7 @@ class DeviceFreezeTest {
         }
         if (InstrumentationRegistry.getArguments().getString("hailCiFixtures") == "true") assertTrue(ready)
         else assumeTrue(ready)
-        fun disabled(pkg: String) = ctx.packageManager.getApplicationEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        fun disabled(pkg: String) = ctx.packageManager.getApplicationEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
         val prefs = PreferenceManager.getDefaultSharedPreferences(ctx)
         val original = prefs.getString(HailData.WORKING_MODE, null)
         val device = UiDevice.getInstance(instrumentation)

@@ -1,5 +1,6 @@
 package com.aistra.hail.ui.apps
 
+import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
@@ -42,7 +43,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     private val binding get() = _binding!!
     private lateinit var appsAdapter: AppsAdapter
 
-    private var contextMenuInfo: ContextMenu.ContextMenuInfo? = null
+    private var contextApp: ApplicationInfo? = null
 
 
     private var exportApkPkg: String? = null
@@ -117,23 +118,32 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     override fun onCreateContextMenu(
         menu: ContextMenu, v: View, menuInfo: ContextMenu.ContextMenuInfo?
     ) {
-        contextMenuInfo = menuInfo
-        val viewHolder = ((menuInfo as HRecyclerView.RecyclerViewContextMenuInfo).viewHolder as AppsAdapter.ViewHolder)
-        menu.setHeaderTitle(viewHolder.info.loadLabel(activity.packageManager))
+        val holder = (menuInfo as? HRecyclerView.RecyclerViewContextMenuInfo)?.viewHolder as? AppsAdapter.ViewHolder ?: return
+        val info = holder.info
+        contextApp = info
+        menu.setHeaderTitle(info.loadLabel(activity.packageManager))
         activity.menuInflater.inflate(R.menu.menu_apps_action, menu)
+        if (HPackages.isSystemApp(info) && info.flags and ApplicationInfo.FLAG_INSTALLED != 0 &&
+            info.packageName != app.packageName) {
+            menu.findItem(R.id.action_system_enabled).apply {
+                isVisible = true
+                setTitle(if (HailData.workingMode.endsWith(HailData.DISABLE)) {
+                    if (info.enabled) R.string.disable_app else R.string.enable_app
+                } else {
+                    if (info.enabled) R.string.disable_in_settings else R.string.enable_in_settings
+                })
+            }
+        }
         super.onCreateContextMenu(menu, v, menuInfo)
     }
 
     override fun onContextItemSelected(item: MenuItem): Boolean {
-        val viewHolder =
-            ((contextMenuInfo as HRecyclerView.RecyclerViewContextMenuInfo).viewHolder as AppsAdapter.ViewHolder)
-        val info = viewHolder.info
+        val info = contextApp ?: return super.onContextItemSelected(item)
         val name = info.loadLabel(app.packageManager)
         val pkg = info.packageName
         when (item.itemId) {
-            R.id.action_details -> HUI.startActivity(
-                Settings.ACTION_APPLICATION_DETAILS_SETTINGS, HPackages.packageUri(pkg)
-            )
+            R.id.action_system_enabled -> changeSystemAppEnabled(info)
+            R.id.action_details -> openAppInfo(pkg)
 
             R.id.action_export_clipboard -> {
                 HUI.copyText(pkg)
@@ -150,6 +160,35 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             else -> return super.onContextItemSelected(item)
         }
         return true
+    }
+
+    private fun openAppInfo(pkg: String) {
+        if (!HUI.startActivity(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, HPackages.packageUri(pkg))) {
+            HUI.showToast(R.string.app_info_unavailable)
+        }
+    }
+
+    private fun changeSystemAppEnabled(info: ApplicationInfo) {
+        val pkg = info.packageName
+        if (!HailData.workingMode.endsWith(HailData.DISABLE)) {
+            openAppInfo(pkg)
+            return
+        }
+        // The action was labelled from this snapshot. Repeating it must never reverse a newer change.
+        val disable = info.enabled
+        viewLifecycleOwner.lifecycleScope.launch {
+            val result = AppManager.changeFrozen(listOf(pkg), disable)
+            when {
+                result.reachedTarget(pkg) -> HUI.showToast(AppManager.resultMessage(result, disable))
+                pkg in result.missing -> HUI.showToast(R.string.app_not_installed)
+                isResumed -> MaterialAlertDialogBuilder(requireContext())
+                    .setTitle(info.loadLabel(app.packageManager))
+                    .setMessage(AppManager.resultMessage(result, disable))
+                    .setPositiveButton(R.string.action_details) { _, _ -> openAppInfo(pkg) }
+                    .setNegativeButton(android.R.string.cancel, null).show()
+            }
+            if (result.changed.isEmpty()) updateAppList()
+        }
     }
 
     private fun extractApk(pkg: String) {
@@ -233,15 +272,17 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             R.id.sort_by_install -> changeAppsSort(HailData.SORT_INSTALL, item)
             R.id.sort_by_update -> changeAppsSort(HailData.SORT_UPDATE, item)
             R.id.filter_user_apps -> changeAppsFilter(HailData.FILTER_USER_APPS, item)
-            R.id.filter_system_apps -> MaterialAlertDialogBuilder(activity).setMessage(R.string.freeze_system_app)
+            R.id.filter_system_apps -> MaterialAlertDialogBuilder(activity)
+                .setMessage(getString(R.string.system_app_controls) + "\n\n" + getString(R.string.freeze_system_app))
                 .setPositiveButton(R.string.action_continue) { _, _ ->
                     changeAppsFilter(HailData.FILTER_SYSTEM_APPS, item)
                 }.setNegativeButton(android.R.string.cancel, null).show()
 
             R.id.filter_frozen_apps -> changeAppsFilter(HailData.FILTER_FROZEN_APPS, item)
             R.id.filter_unfrozen_apps -> changeAppsFilter(HailData.FILTER_UNFROZEN_APPS, item)
+            else -> return false
         }
-        return false
+        return true
     }
 
     private fun changeAppsSort(sort: String, item: MenuItem) {
@@ -281,6 +322,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     }
 
     override fun onDestroyView() {
+        contextApp = null
         binding.recyclerView.adapter = null
         _binding = null
         super.onDestroyView()

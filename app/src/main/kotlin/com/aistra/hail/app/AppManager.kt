@@ -2,6 +2,7 @@ package com.aistra.hail.app
 
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import com.aistra.hail.HailApp.Companion.app
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
@@ -14,6 +15,7 @@ import com.aistra.hail.BuildConfig
 import com.aistra.hail.utils.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import rikka.shizuku.Shizuku
 
 object AppManager {
     val lockScreen: Boolean
@@ -89,12 +91,28 @@ object AppManager {
                 }
                 val single = result.changed.singleOrNull() ?: result.unchanged.singleOrNull()
                 val label = single?.let { pkg -> runCatching { infoByPackage[pkg]?.loadLabel(app.packageManager)?.toString() }.getOrNull() }
-                result.copy(singleLabel = label)
+                val failed = result.failed.singleOrNull()
+                val failureMessage = if (failed != null && mode.endsWith(HailData.DISABLE) &&
+                    result.changed.isEmpty() && result.unchanged.isEmpty() && result.missing.isEmpty()) {
+                    val info = infoByPackage[failed] ?: HPackages.getApplicationInfoOrNull(failed)
+                    disableFailureMessage(failed, mode, info)
+                } else null
+                result.copy(singleLabel = label, failureMessage = failureMessage)
             }
         }
     }
 
+    private fun disableFailureMessage(pkg: String, mode: String, info: ApplicationInfo?): String? {
+        if (mode == HailData.MODE_SHIZUKU_DISABLE) {
+            if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) return app.getString(R.string.start_shizuku)
+            if (!runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false))
+                return app.getString(R.string.authorize_shizuku)
+        }
+        return if (info != null && HPackages.isSystemApp(info)) app.getString(R.string.system_app_change_failed, pkg) else null
+    }
+
     fun resultMessage(result: FreezeResult, frozen: Boolean): String {
+        result.failureMessage?.let { return it }
         if (result.failed.isNotEmpty() || result.missing.isNotEmpty()) {
             if (result.failed.size == 1 && result.missing.isEmpty() && result.changed.isEmpty() && result.unchanged.isEmpty()) {
                 return app.getString(if (!frozen && HailData.workingMode.endsWith(HailData.STOP))

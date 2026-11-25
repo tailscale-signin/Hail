@@ -5,7 +5,8 @@ data class FreezeResult(
     val unchanged: Set<String>,
     val missing: Set<String>,
     val failed: Set<String>,
-    val singleLabel: String? = null
+    val singleLabel: String? = null,
+    val failureMessage: String? = null
 ) {
     fun reachedTarget(pkg: String) = pkg in changed || pkg in unchanged
 }
