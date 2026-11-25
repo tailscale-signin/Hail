@@ -245,6 +245,18 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 icon = { Icon(imageVector = Icons.AutoMirrored.Outlined.Shortcut, contentDescription = null) },
                 onClick = ::addPinShortcut
             )
+            preference(
+                key = "add_all_app_shortcuts",
+                title = { Text(stringResource(R.string.add_all_app_shortcuts)) },
+                summary = { Text(stringResource(R.string.add_all_app_shortcuts_summary)) },
+                icon = { Icon(Icons.Outlined.Apps, contentDescription = null) },
+                onClick = {
+                    val dialogs = childFragmentManager
+                    if (!dialogs.isStateSaved && dialogs.findFragmentByTag(BulkShortcutDialog.TAG) == null) {
+                        BulkShortcutDialog().showNow(dialogs, BulkShortcutDialog.TAG)
+                    }
+                }
+            )
             listPreference(
                 key = HailData.DYNAMIC_SHORTCUT_ACTION,
                 defaultValue = HailData.ACTION_NONE,

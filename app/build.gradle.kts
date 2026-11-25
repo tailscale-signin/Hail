@@ -15,14 +15,17 @@ android {
     }.standardOutput.asText.get().trim()
 
     namespace = "com.aistra.hail"
-    compileSdk = 36
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
 
     defaultConfig {
         applicationId = "com.aistra.hail"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 23
-        targetSdk = 36
-        versionCode = 35
-        versionName = "1.11.0"
+        targetSdk = 37
+        versionCode = 36
+        versionName = "1.12.0"
     }
 
     buildTypes {
@@ -65,9 +68,8 @@ android {
 }
 androidComponents {
     onVariants { variant ->
-        variant.outputs.forEach {
-            if (it is com.android.build.api.variant.impl.VariantOutputImpl)
-                it.outputFileName = "Hail-v${it.versionName.get()}.apk"
+        variant.outputs.forEach { output ->
+            output.outputFileName.set(output.versionName.map { "Hail-v${it}.apk" })
         }
     }
 }
@@ -88,7 +90,7 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     debugImplementation(libs.androidx.ui.tooling)
     implementation(libs.androidx.appcompat)
-    implementation(libs.androidx.biometric.ktx)
+    implementation(libs.androidx.biometric)
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.livedata.ktx)
@@ -109,4 +111,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.hiddenapibypass)
     compileOnly(libs.libxposed.api)
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.uiautomator)
 }

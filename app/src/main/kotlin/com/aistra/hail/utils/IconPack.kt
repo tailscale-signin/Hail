@@ -13,28 +13,25 @@ object IconPack {
     fun loadIcon(packageName: String): Bitmap? = runCatching {
 //        val componentName = app.packageManager.getLaunchIntentForPackage(packageName)
 //            ?.run { resolveActivity(app.packageManager).toString() } ?: return null
-        val resources = app.packageManager.getResourcesForApplication(HailData.iconPack)
-        getResourceName(resources, HailData.iconPack, packageName)?.let {
-            return BitmapFactory.decodeResource(
-                resources, resources.getIdentifier(it, "drawable", HailData.iconPack)
-            )
+        val pack = HailData.iconPack
+        if (pack == HailData.ACTION_NONE) return null
+        val resources = app.packageManager.getResourcesForApplication(pack)
+        getResourceName(resources, pack, packageName)?.let {
+            return BitmapFactory.decodeResource(resources, resources.getIdentifier(it, "drawable", pack))
         }
     }.getOrNull()
 
     @SuppressLint("DiscouragedApi")
-    private fun getResourceName(
-        resources: Resources, resPackage: String, componentName: String
-    ): String? {
-        val parser = resources.getXml(resources.getIdentifier("appfilter", "xml", resPackage))
-        while (parser.eventType != XmlResourceParser.END_DOCUMENT) {
-            runCatching {
-                if (parser.eventType == XmlResourceParser.START_TAG && parser.getAttributeValue(0)
-                        .contains(componentName)
-                ) {
-                    return parser.getAttributeValue(1)
-                }
+    private fun getResourceName(resources: Resources, resPackage: String, componentName: String): String? {
+        val id = resources.getIdentifier("appfilter", "xml", resPackage)
+        if (id == 0) return null
+        resources.getXml(id).use { parser ->
+            while (parser.eventType != XmlResourceParser.END_DOCUMENT) {
+                if (parser.eventType == XmlResourceParser.START_TAG &&
+                    parser.getAttributeValue(null, "component")?.contains(componentName) == true
+                ) return parser.getAttributeValue(null, "drawable")
+                parser.next()
             }
-            parser.next()
         }
         return null
     }

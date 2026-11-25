@@ -1,6 +1,7 @@
 package com.aistra.hail.utils
 
 import android.content.Intent
+import android.content.IntentSender
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
@@ -13,6 +14,7 @@ import com.aistra.hail.R
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.HailApi
 import com.aistra.hail.app.HailData
+import com.aistra.hail.ui.api.ApiActivity
 import me.zhanghai.android.appiconloader.AppIconLoader
 
 object HShortcuts {
@@ -25,25 +27,41 @@ object HShortcuts {
     }
 
     fun addPinShortcut(icon: Drawable, id: String, label: CharSequence, intent: Intent) {
-        addPinShortcut(getDrawableIcon(icon), id, label, intent)
+        addPinShortcut(buildPinShortcut(getDrawableIcon(icon), id, label, intent))
     }
 
     fun addPinShortcut(appInfo: AppInfo, id: String, label: CharSequence, intent: Intent) {
-        appInfo.applicationInfo?.let {
-            val icon = IconPack.loadIcon(it.packageName) ?: iconLoader.loadIcon(it)
-            addPinShortcut(IconCompat.createWithBitmap(icon), id, label, intent)
-        } ?: run {
-            addPinShortcut(app.packageManager.defaultActivityIcon, id, label, intent)
-        }
+        addPinShortcut(appPinShortcut(appInfo, id, label, intent))
     }
 
-    private fun addPinShortcut(icon: IconCompat, id: String, label: CharSequence, intent: Intent) {
-        if (ShortcutManagerCompat.isRequestPinShortcutSupported(app)) {
-            val shortcut =
-                ShortcutInfoCompat.Builder(app, id).setIcon(icon).setShortLabel(label)
-                    .setIntent(intent).build()
-            ShortcutManagerCompat.requestPinShortcut(app, shortcut, null)
-        } else HUI.showToast(
+    fun appPinShortcut(
+        info: AppInfo,
+        id: String = info.packageName,
+        label: CharSequence = info.name,
+        intent: Intent = HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, info.packageName)
+    ): ShortcutInfoCompat {
+        val icon = info.applicationInfo?.let {
+            IconCompat.createWithBitmap(IconPack.loadIcon(it.packageName) ?: iconLoader.loadIcon(it))
+        } ?: getDrawableIcon(app.packageManager.defaultActivityIcon)
+        return buildPinShortcut(icon, id, label.ifBlank { id }, intent)
+    }
+
+    private fun buildPinShortcut(icon: IconCompat, id: String, label: CharSequence, intent: Intent) =
+        ShortcutInfoCompat.Builder(app, id).setIcon(icon).setShortLabel(label)
+            .setIntent(Intent(intent).setClass(app, ApiActivity::class.java)).build()
+
+    val supportsPinning get() = ShortcutManagerCompat.isRequestPinShortcutSupported(app)
+
+    fun pinnedIds(): Set<String> = if (HTarget.O) {
+        ShortcutManagerCompat.getShortcuts(app, ShortcutManagerCompat.FLAG_MATCH_PINNED)
+            .mapTo(mutableSetOf()) { it.id }
+    } else emptySet()
+
+    fun requestPin(shortcut: ShortcutInfoCompat, callback: IntentSender? = null) =
+        supportsPinning && ShortcutManagerCompat.requestPinShortcut(app, shortcut, callback)
+
+    private fun addPinShortcut(shortcut: ShortcutInfoCompat) {
+        if (!requestPin(shortcut)) HUI.showToast(
             R.string.operation_failed, app.getString(R.string.action_add_pin_shortcut)
         )
     }
