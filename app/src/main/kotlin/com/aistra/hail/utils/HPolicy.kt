@@ -24,10 +24,14 @@ object HPolicy {
     fun setAppHidden(packageName: String, hidden: Boolean): Boolean =
         isDeviceOwnerActive && dpm.setApplicationHidden(admin, packageName, hidden)
 
-    fun setAppSuspended(packageName: String, suspended: Boolean): Boolean =
-        isDeviceOwnerActive && HTarget.N && dpm.setPackagesSuspended(
-            admin, arrayOf(packageName), suspended
-        ).isEmpty()
+    fun setSuspended(packages: List<String>, suspended: Boolean): Set<String> = try {
+        if (HTarget.N && isDeviceOwnerActive) {
+            packages.toSet() - dpm.setPackagesSuspended(admin, packages.toTypedArray(), suspended).toSet()
+        } else emptySet()
+    } catch (e: RuntimeException) {
+        HLog.e(e)
+        emptySet()
+    }
 
     fun uninstallApp(packageName: String): Boolean = when {
         isDeviceOwnerActive -> {
@@ -58,7 +62,12 @@ object HPolicy {
 
     @Suppress("DEPRECATION")
     fun removeProfileOwner() {
-        if (isProfileOwner) dpm.clearProfileOwner(admin)
+        if (!isProfileOwner) return
+        if (HTarget.N) dpm.clearProfileOwner(admin) else {
+            val settings = Intent(android.provider.Settings.ACTION_SYNC_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (settings.resolveActivity(app.packageManager) != null) app.startActivity(settings)
+            else HUI.showToast(com.aistra.hail.R.string.activity_not_found)
+        }
     }
 
     @Suppress("DEPRECATION")

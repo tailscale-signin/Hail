@@ -31,7 +31,7 @@ object HailData {
     private const val KEY_WHITELISTED = "whitelisted"
     const val KEY_PACKAGE = "package"
     const val KEY_FROZEN = "frozen"
-    private const val SORT_BY = "sort_by"
+    const val SORT_BY = "sort_by"
     const val SORT_NAME = "name"
     const val SORT_INSTALL = "install"
     const val SORT_UPDATE = "update"
@@ -163,10 +163,13 @@ object HailData {
     private val appsPath = "$dir/apps.json"
     private val tagsPath = "$dir/tags.json"
 
+    private const val STORED_APPS = "managed_apps_json"
+    private const val STORED_TAGS = "managed_tags_json"
+
     val checkedList: MutableList<AppInfo> by lazy {
         mutableListOf<AppInfo>().apply {
             runCatching {
-                val json = JSONArray(HFiles.read(appsPath))
+                val json = JSONArray(sp.getString(STORED_APPS, null) ?: HFiles.read(appsPath))
                 for (i in 0 until json.length()) {
                     add(with(json.getJSONObject(i)) {
                         AppInfo(
@@ -186,6 +189,7 @@ object HailData {
     fun isChecked(packageName: String): Boolean = checkedList.any { it.packageName == packageName }
 
     fun addCheckedApp(packageName: String, tagId: Int = 0, saveApps: Boolean = true) {
+        if (isChecked(packageName)) return
         checkedList.add(AppInfo(packageName, tagIdList = mutableListOf(tagId)))
         if (saveApps) saveApps()
     }
@@ -196,25 +200,14 @@ object HailData {
     }
 
     fun saveApps() {
-        if (!HFiles.exists(dir)) HFiles.createDirectories(dir)
-        HFiles.write(appsPath, JSONArray().run {
-            checkedList.forEach {
-                put(
-                    JSONObject()
-                        .put(KEY_PACKAGE, it.packageName)
-                        .put(KEY_PINNED, it.pinned)
-                        .put(KEY_WHITELISTED, it.whitelisted)
-                        .put(KEY_TAGS, JSONArray(it.tagIdList))
-                )
-            }
-            toString()
-        })
+        sp.edit { putString(STORED_APPS, BackupContent.encodeApps(checkedList).toString()) }
+        app.setAutoFreezeService()
     }
 
     val tags: MutableList<Pair<String, Int>> by lazy {
         mutableListOf<Pair<String, Int>>().apply {
             runCatching {
-                val json = JSONArray(HFiles.read(tagsPath))
+                val json = JSONArray(sp.getString(STORED_TAGS, null) ?: HFiles.read(tagsPath))
                 for (i in 0 until json.length()) {
                     add(with(json.getJSONObject(i)) { getString(KEY_TAG) to getInt(KEY_ID) })
                 }
@@ -225,13 +218,40 @@ object HailData {
     }
 
     fun saveTags() {
-        if (!HFiles.exists(dir)) HFiles.createDirectories(dir)
-        HFiles.write(tagsPath, JSONArray().run {
-            tags.forEach {
-                put(JSONObject().put(KEY_TAG, it.first).put(KEY_ID, it.second))
+        sp.edit {
+            putString(STORED_TAGS, BackupContent.encodeTags(tags).toString())
+            putString(STORED_APPS, BackupContent.encodeApps(checkedList).toString())
+        }
+        app.setAutoFreezeService()
+    }
+
+    // The mutable library is owned by the main thread. Copy membership before dispatching work.
+    fun backupSnapshot() = BackupContent(
+        checkedList.map { AppInfo(it.packageName, it.pinned, it.whitelisted, it.tagIdList.toMutableList()) },
+        tags.toList(),
+        BackupContent.portableSettings(sp.all)
+    )
+
+    fun restoreBackup(content: BackupContent, appsJson: String, tagsJson: String) {
+        // Collections and portable settings are published in one preferences transaction.
+        val liveApps = checkedList
+        val liveTags = tags
+        sp.edit {
+            putString(STORED_APPS, appsJson)
+            putString(STORED_TAGS, tagsJson)
+            BackupContent.settingKeys.forEach { remove(it) }
+            content.settings.forEach { (key, value) ->
+                when (value) {
+                    is String -> putString(key, value)
+                    is Boolean -> putBoolean(key, value)
+                    is Float -> putFloat(key, value)
+                }
             }
-            toString()
-        })
+        }
+        liveApps.clear()
+        liveApps.addAll(content.apps)
+        liveTags.clear()
+        liveTags.addAll(content.tags)
     }
 
     fun changeAppsSort(sort: String) = sp.edit { putString(SORT_BY, sort) }

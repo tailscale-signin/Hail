@@ -53,8 +53,17 @@ class AutoFreezeService : NotificationListenerService() {
 
     override fun onCreate() {
         super.onCreate()
-        instance = this
         registerScreenReceiver()
+    }
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        listener = this
+    }
+
+    override fun onListenerDisconnected() {
+        if (listener === this) listener = null
+        super.onListenerDisconnected()
     }
 
     private fun registerScreenReceiver() {
@@ -62,12 +71,16 @@ class AutoFreezeService : NotificationListenerService() {
     }
 
     override fun onDestroy() {
+        if (listener === this) listener = null
         super.onDestroy()
         unregisterReceiver(lockReceiver)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
     }
 
     companion object {
-        lateinit var instance: AutoFreezeService private set
+        @Volatile private var listener: AutoFreezeService? = null
+        fun notifyingPackages(): Set<String>? = runCatching {
+            listener?.activeNotifications?.mapTo(hashSetOf()) { it.packageName }
+        }.getOrNull()
     }
 }

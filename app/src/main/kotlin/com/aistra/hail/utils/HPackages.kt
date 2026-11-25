@@ -11,44 +11,47 @@ import com.aistra.hail.HailApp.Companion.app
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 
 object HPackages {
+    @Suppress("DEPRECATION")
+    private const val INCLUDE_UNINSTALLED = PackageManager.GET_UNINSTALLED_PACKAGES
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private object PackageFlags {
+        val applications = PackageManager.ApplicationInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())
+        val packages = PackageManager.PackageInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())
+    }
+
     val myUserId get() = android.os.Process.myUserHandle().hashCode()
 
     fun packageUri(packageName: String) = "package:$packageName"
 
     @RequiresApi(Build.VERSION_CODES.N)
     fun packageUid(packageName: String) = if (HTarget.T) app.packageManager.getPackageUid(
-        packageName, PackageManager.PackageInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())
+        packageName, PackageFlags.packages
     ) else app.packageManager.getPackageUid(packageName, PackageManager.MATCH_UNINSTALLED_PACKAGES)
 
-    fun getInstalledApplications(flags: Int = if (HTarget.N) PackageManager.MATCH_UNINSTALLED_PACKAGES else 8192): List<ApplicationInfo> =
-        if (HTarget.T) app.packageManager.getInstalledApplications(
-            PackageManager.ApplicationInfoFlags.of(flags.toLong())
-        )
+    fun getInstalledApplications(flags: Int = INCLUDE_UNINSTALLED): List<ApplicationInfo> =
+        if (HTarget.T && flags == INCLUDE_UNINSTALLED) app.packageManager.getInstalledApplications(PackageFlags.applications)
         else app.packageManager.getInstalledApplications(flags)
 
     fun getUnhiddenPackageInfoOrNull(
-        packageName: String, flags: Int = if (HTarget.N) PackageManager.MATCH_UNINSTALLED_PACKAGES else 8192
+        packageName: String, flags: Int = INCLUDE_UNINSTALLED
     ) = runCatching {
-        if (HTarget.T) app.packageManager.getPackageInfo(
-            packageName, PackageManager.PackageInfoFlags.of(flags.toLong())
-        )
+        if (HTarget.T && flags == INCLUDE_UNINSTALLED) app.packageManager.getPackageInfo(packageName, PackageFlags.packages)
         else app.packageManager.getPackageInfo(packageName, flags)
     }.getOrNull()
 
     fun getApplicationInfoOrNull(
-        packageName: String, flags: Int = if (HTarget.N) PackageManager.MATCH_UNINSTALLED_PACKAGES else 8192
+        packageName: String, flags: Int = INCLUDE_UNINSTALLED
     ) = runCatching {
-        if (HTarget.T) app.packageManager.getApplicationInfo(
-            packageName, PackageManager.ApplicationInfoFlags.of(flags.toLong())
-        )
+        if (HTarget.T && flags == INCLUDE_UNINSTALLED) app.packageManager.getApplicationInfo(packageName, PackageFlags.applications)
         else app.packageManager.getApplicationInfo(packageName, flags)
     }.getOrNull()
 
     fun isAppDisabled(packageName: String): Boolean = getApplicationInfoOrNull(packageName)?.enabled?.not() ?: false
 
-    fun isAppHidden(packageName: String): Boolean = getApplicationInfoOrNull(packageName)?.let {
-        (ApplicationInfo::class.java.getField("privateFlags").get(it) as Int) and 1 == 1
-    } ?: false
+    private val privateFlags by lazy { runCatching { ApplicationInfo::class.java.getField("privateFlags") }.getOrNull() }
+    fun isHidden(info: ApplicationInfo): Boolean = runCatching { (privateFlags?.getInt(info) ?: 0) and 1 != 0 }.getOrDefault(false)
+    fun isAppHidden(packageName: String) = getApplicationInfoOrNull(packageName)?.let(::isHidden) == true
 
     fun isAppStopped(packageName: String): Boolean =
         getApplicationInfoOrNull(packageName)?.run { flags and ApplicationInfo.FLAG_STOPPED == ApplicationInfo.FLAG_STOPPED }
@@ -86,18 +89,15 @@ object HPackages {
     }
 
     fun setAppDisabled(packageName: String, disabled: Boolean): Boolean {
-        getApplicationInfoOrNull(packageName) ?: return false
         if (disabled) forceStopApp(packageName)
-        runCatching {
-            val newState = when {
-                !disabled -> PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                else -> PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-            }
+        val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        return try {
             app.packageManager.setApplicationEnabledSetting(packageName, newState, 0)
-        }.onFailure {
-            HLog.e(it)
+            app.packageManager.getApplicationEnabledSetting(packageName) == newState
+        } catch (e: RuntimeException) {
+            HLog.e(e)
+            false
         }
-        return isAppDisabled(packageName) == disabled
     }
 
     @RequiresApi(Build.VERSION_CODES.P)

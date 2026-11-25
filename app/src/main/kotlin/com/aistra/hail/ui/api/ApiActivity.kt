@@ -7,6 +7,12 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -35,31 +41,59 @@ import com.aistra.hail.utils.*
 import com.aistra.hail.work.HWork.setAutoFreeze
 
 class ApiActivity : ComponentActivity() {
+    private var actionJob: Job? = null
+    private var lastRequest = 0L
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        runCatching {
-            if (handleAction(intent.action)) finish()
-        }.onFailure(::setErrorDialog)
+        dispatch(intent)
     }
 
-    private fun handleAction(action: String?): Boolean {
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        dispatch(intent)
+    }
+
+    private fun dispatch(request: Intent) = enqueue {
+        setIntent(request)
+        handleAction(request.action)
+    }
+
+    private fun enqueue(action: suspend () -> Boolean) {
+        val previous = actionJob
+        val number = ++lastRequest
+        actionJob = lifecycleScope.launch {
+            previous?.join()
+            try {
+                if (action() && number == lastRequest) finish()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (number == lastRequest) setErrorDialog(e)
+            }
+        }
+    }
+
+    private suspend fun handleAction(action: String?): Boolean {
         when (action) {
             Intent.ACTION_SHOW_APP_INFO -> {
-                setContent { AppTheme { RedirectBottomSheet(requirePackage) } }
+                val pkg = requirePackage()
+                if (withContext(Dispatchers.IO) { HPackages.getApplicationInfoOrNull(pkg) } == null)
+                    throw NameNotFoundException(getString(R.string.app_not_installed))
+                setContent { AppTheme { RedirectBottomSheet(pkg) } }
                 return false
             }
 
             Intent.ACTION_VIEW -> return handleSchema(intent.data)
 
-            HailApi.ACTION_LAUNCH -> launchApp(requirePackage, runCatching { requireTagId }.getOrNull())
-            HailApi.ACTION_FREEZE -> setAppFrozen(requirePackage, true)
-            HailApi.ACTION_UNFREEZE -> setAppFrozen(requirePackage, false)
-            HailApi.ACTION_FREEZE_TAG -> setListFrozen(
-                true, HailData.checkedList.filter { requireTagId in it.tagIdList }, true
-            )
-
-            HailApi.ACTION_UNFREEZE_TAG -> setListFrozen(
-                false, HailData.checkedList.filter { requireTagId in it.tagIdList })
+            HailApi.ACTION_LAUNCH -> launchApp(requirePackage(), runCatching { requireTagId }.getOrNull())
+            HailApi.ACTION_FREEZE -> setAppFrozen(requirePackage(), true)
+            HailApi.ACTION_UNFREEZE -> setAppFrozen(requirePackage(), false)
+            HailApi.ACTION_FREEZE_TAG, HailApi.ACTION_UNFREEZE_TAG -> {
+                val id = requireTagId
+                val freeze = action == HailApi.ACTION_FREEZE_TAG
+                setListFrozen(freeze, HailData.checkedList.filter { id in it.tagIdList }, skipWhitelisted = freeze)
+            }
 
             HailApi.ACTION_FREEZE_ALL -> setListFrozen(true)
             HailApi.ACTION_UNFREEZE_ALL -> setListFrozen(false)
@@ -87,7 +121,7 @@ class ApiActivity : ComponentActivity() {
      * hail://lock
      * hail://lock_freeze
      */
-    private fun handleSchema(uri: Uri?): Boolean {
+    private suspend fun handleSchema(uri: Uri?): Boolean {
         if (uri?.scheme != "hail") throw IllegalArgumentException("Unknown scheme:\n${uri?.scheme}")
         return handleAction(
             when (uri.host) {
@@ -139,12 +173,9 @@ class ApiActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun ClickableItem(icon: ImageVector, @StringRes title: Int, onClick: () -> Unit) = Row(
+    private fun ClickableItem(icon: ImageVector, @StringRes title: Int, onClick: suspend () -> Unit) = Row(
         modifier = Modifier.fillMaxWidth().clickable(onClick = {
-            runCatching {
-                onClick()
-                finish()
-            }.onFailure(::setErrorDialog)
+            enqueue { onClick(); true }
         }), verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
@@ -165,17 +196,17 @@ class ApiActivity : ComponentActivity() {
             }
         })
 
-    private val requirePackage: String
-        get() = intent.run {
+    private fun requirePackage(): String {
+        val pkg = intent.run {
             if (action == Intent.ACTION_VIEW) data?.getQueryParameter(HailData.KEY_PACKAGE)
             else getStringExtra(
                 if (action != Intent.ACTION_SHOW_APP_INFO) HailData.KEY_PACKAGE
                 else if (HTarget.N) Intent.EXTRA_PACKAGE_NAME
                 else "android.intent.extra.PACKAGE_NAME"
             )
-        }?.also {
-            HPackages.getApplicationInfoOrNull(it) ?: throw NameNotFoundException(getString(R.string.app_not_installed))
         } ?: throw IllegalArgumentException("Package must not be null")
+        return pkg
+    }
 
     private val requireTagId: Int
         get() = intent.run {
@@ -186,53 +217,34 @@ class ApiActivity : ComponentActivity() {
                 ?: throw IllegalStateException("Tag unavailable:\n$it")
         } ?: throw IllegalArgumentException("Tag must not be null")
 
-    private fun launchApp(pkg: String, tagId: Int? = null) {
+    private suspend fun launchApp(pkg: String, tagId: Int? = null) {
         if (tagId != null) setListFrozen(false, HailData.checkedList.filter { tagId in it.tagIdList })
-        if (AppManager.isAppFrozen(pkg) && AppManager.setAppFrozen(pkg, false)) {
-            app.setAutoFreezeService()
-        }
-        if (HailData.workingMode == HailData.MODE_ISLAND_HIDE) {
-            HIsland.ensureLaunchIntentExists(packageName)
-        }
-        packageManager.getLaunchIntentForPackage(pkg)?.let {
-            HShortcuts.addDynamicShortcut(pkg)
-            startActivity(it)
-        } ?: throw ActivityNotFoundException(getString(R.string.activity_not_found))
+        val target = AppManager.prepareLaunch(pkg) ?: throw ActivityNotFoundException(getString(R.string.activity_not_found))
+        startActivity(target)
+        app.recordLaunch(pkg)
     }
 
-    private fun setAppFrozen(pkg: String, frozen: Boolean) = when {
-        frozen && !HailData.isChecked(pkg) -> throw SecurityException("Package not checked")
-        AppManager.isAppFrozen(pkg) != frozen && !AppManager.setAppFrozen(
-            pkg, frozen
-        ) -> throw IllegalStateException(getString(R.string.permission_denied))
-
-        else -> {
-            HUI.showToast(
-                if (frozen) R.string.msg_freeze else R.string.msg_unfreeze,
-                HPackages.getApplicationInfoOrNull(pkg)?.loadLabel(packageManager) ?: pkg
-            )
-            app.setAutoFreezeService()
-        }
+    private suspend fun setAppFrozen(pkg: String, frozen: Boolean) {
+        if (pkg == packageName) throw SecurityException(getString(R.string.permission_denied))
+        if (frozen && !HailData.isChecked(pkg)) throw SecurityException("Package not checked")
+        val result = AppManager.changeFrozen(listOf(pkg), frozen)
+        if (pkg in result.missing) throw NameNotFoundException(getString(R.string.app_not_installed))
+        if (!result.reachedTarget(pkg)) throw IllegalStateException(AppManager.resultMessage(result, frozen))
+        HUI.showToast(AppManager.resultMessage(result, frozen))
     }
 
-    private fun setListFrozen(
+    private suspend fun setListFrozen(
         frozen: Boolean, list: List<AppInfo> = HailData.checkedList, skipWhitelisted: Boolean = false
     ) {
-        val filtered =
-            list.filter { AppManager.isAppFrozen(it.packageName) != frozen && !(skipWhitelisted && it.whitelisted) }
-        when (val result = AppManager.setListFrozen(frozen, *filtered.toTypedArray())) {
-            null -> throw IllegalStateException(getString(R.string.permission_denied))
-            else -> {
-                HUI.showToast(
-                    if (frozen) R.string.msg_freeze else R.string.msg_unfreeze, result
-                )
-                app.setAutoFreezeService()
-            }
-        }
+        val packages = list.filterNot { skipWhitelisted && it.whitelisted }.map { it.packageName }
+        val result = AppManager.changeFrozen(packages, frozen)
+        val message = AppManager.resultMessage(result, frozen)
+        if (result.failed.isNotEmpty() && result.changed.isEmpty()) throw IllegalStateException(message)
+        HUI.showToast(message)
     }
 
-    private fun lockScreen(freezeAll: Boolean) {
+    private suspend fun lockScreen(freezeAll: Boolean) {
         if (freezeAll) setListFrozen(true)
-        if (AppManager.lockScreen.not()) throw IllegalStateException(getString(R.string.permission_denied))
+        if (!withContext(Dispatchers.IO) { AppManager.lockScreen }) throw IllegalStateException(getString(R.string.permission_denied))
     }
 }

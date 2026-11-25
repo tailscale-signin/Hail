@@ -11,6 +11,8 @@ on:
       - 'fastlane/**'
       - '.github/**'
       - '!.github/workflows/android.yml'
+      - '!.github/scripts/test-device-actions.sh'
+      - '!.github/scripts/check-device-results.py'
 
 permissions:
   contents: read
@@ -37,23 +39,31 @@ jobs:
           if-no-files-found: error
       - name: Enable emulator acceleration
         run: sudo chmod a+rw /dev/kvm
-      - name: Test shortcut pinning with the Android 16 launcher
+      - name: Test backup, shortcuts and package actions on Android 16
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 36
           target: default
           arch: x86_64
           disable-animations: true
-          script: ./gradlew :app:connectedDebugAndroidTest
-      - name: Upload launcher test report
-        if: failure()
+          script: bash .github/scripts/test-device-actions.sh
+      - name: Upload Android test report
+        if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: launcher-test-report
-          path: app/build/reports/androidTests/connected/
+          name: android-test-report
+          path: |
+            app/build/reports/androidTests/connected/
+            app/build/outputs/androidTest-results/connected/
       - name: Verify optimized release build
         if: ${{ !cancelled() }}
         run: ./gradlew :app:assembleRelease
+      - name: Upload optimized unsigned APK for offline release signing
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: Hail-unsigned-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
 
   build:
     runs-on: ubuntu-latest

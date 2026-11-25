@@ -46,6 +46,12 @@ action.
 Suspend only prevents the user from interacting with the app, it does **NOT** prevent the app from running in the
 background.
 
+## Back up and restore
+
+Open **Settings → Backup and restore → Back up to file** to save your managed apps, tags, pins, whitelist, portable preferences and known frozen states in a JSON file. **Restore from file** previews the app and tag counts before replacing your configuration.
+
+Select **Also reapply saved frozen states** to change apps on this device using its current working mode. Hail reports changes, apps already in the requested state, missing apps and failures. Android permissions, the working mode and biometric login belong to each device.
+
 ## Working mode
 
 **Any app that has been frozen on Hail will need to be unfrozen by the same working mode.**

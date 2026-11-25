@@ -1,102 +1,74 @@
 package com.aistra.hail.ui.home
 
+import android.content.pm.ApplicationInfo
 import android.util.TypedValue
 import android.view.LayoutInflater
-import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageView
-import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import com.aistra.hail.R
 import com.aistra.hail.app.AppInfo
-import com.aistra.hail.app.HailData
+import com.aistra.hail.databinding.ItemHomeBinding
 import com.aistra.hail.utils.AppIconCache
 import com.aistra.hail.utils.HPackages.myUserId
 import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.Job
 
-class PagerAdapter(
-    private val selectedList: List<AppInfo>,
-    private val flags: MutableMap<String, Int> = mutableMapOf()
-) : ListAdapter<AppInfo, PagerAdapter.ViewHolder>(HomeDiff(selectedList, flags)) {
-    private var loadIconJob: Job? = null
+data class HomeRow(val info: AppInfo, val application: ApplicationInfo?, val label: String,
+                   val state: AppInfo.State, val pinned: Boolean, val whitelisted: Boolean,
+                   val selected: Boolean, val grayscale: Boolean, val fontSize: Float)
+
+class PagerAdapter : ListAdapter<HomeRow, PagerAdapter.ViewHolder>(object : DiffUtil.ItemCallback<HomeRow>() {
+    override fun areItemsTheSame(oldItem: HomeRow, newItem: HomeRow) = oldItem.info == newItem.info
+    override fun areContentsTheSame(oldItem: HomeRow, newItem: HomeRow) =
+        oldItem.copy(application = newItem.application) == newItem
+}) {
     lateinit var onItemClickListener: OnItemClickListener
     lateinit var onItemLongClickListener: OnItemLongClickListener
+    val apps get() = currentList.map { it.info }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder = ViewHolder(
-        LayoutInflater.from(parent.context).inflate(R.layout.item_home, parent, false)
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = ViewHolder(
+        ItemHomeBinding.inflate(LayoutInflater.from(parent.context), parent, false)
     )
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        val info = currentList[position]
-        flags[info.packageName] = info.getFlag(selectedList)
-        holder.itemView.run {
-            setOnClickListener { onItemClickListener.onItemClick(info) }
-            setOnLongClickListener { onItemLongClickListener.onItemLongClick(info) }
-            findViewById<ImageView>(R.id.app_icon).run {
-                info.applicationInfo?.let {
-                    loadIconJob = AppIconCache.loadIconBitmapAsync(
-                        context,
-                        it,
-                        myUserId,
-                        this,
-                        HailData.grayscaleIcon && info.state == AppInfo.State.FROZEN
-                    )
-                } ?: run {
-                    setImageDrawable(context.packageManager.defaultActivityIcon)
-                    colorFilter = null
-                }
+        val row = getItem(position)
+        val frozen = row.state == AppInfo.State.FROZEN
+        holder.iconJob?.cancel()
+        with(holder.binding) {
+            root.setOnClickListener { onItemClickListener.onItemClick(row.info) }
+            root.setOnLongClickListener { onItemLongClickListener.onItemLongClick(row.info) }
+            val ctx = root.context
+            if (row.application != null) {
+                holder.iconJob = AppIconCache.loadIconBitmapAsync(ctx, row.application, myUserId, appIcon, row.grayscale && frozen)
+            } else {
+                appIcon.setImageDrawable(ctx.packageManager.defaultActivityIcon)
+                appIcon.colorFilter = null
             }
-            findViewById<TextView>(R.id.app_name).run {
-                text = buildString {
-                    if (!HailData.grayscaleIcon && info.state == AppInfo.State.FROZEN) append("\u2744\uFE0F")
-                    if (info.whitelisted) append("\uD83D\uDD12")
-                    append(info.name)
-                }
-                isEnabled = !HailData.grayscaleIcon || info.state != AppInfo.State.FROZEN
-                when {
-                    info in selectedList -> setTextColor(
-                        MaterialColors.getColor(this, androidx.appcompat.R.attr.colorPrimary)
-                    )
-
-                    info.state == AppInfo.State.NOT_FOUND -> setTextColor(
-                        MaterialColors.getColor(this, androidx.appcompat.R.attr.colorError)
-                    )
-
-                    else -> setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
-                }
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, HailData.homeFontSize)
+            appName.text = buildString {
+                if (!row.grayscale && frozen) append("❄️")
+                if (row.whitelisted) append("🔒")
+                append(row.label)
             }
+            appName.isEnabled = !row.grayscale || !frozen
+            appName.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+            if (row.selected || row.state == AppInfo.State.NOT_FOUND) {
+                appName.setTextColor(MaterialColors.getColor(appName, if (row.selected)
+                    androidx.appcompat.R.attr.colorPrimary else com.google.android.material.R.attr.colorOnErrorContainer))
+            }
+            appName.setTextSize(TypedValue.COMPLEX_UNIT_SP, row.fontSize)
         }
     }
 
-    fun onDestroy() {
-        if (loadIconJob?.isActive == true) loadIconJob?.cancel()
+    override fun onViewRecycled(holder: ViewHolder) {
+        holder.iconJob?.cancel()
+        super.onViewRecycled(holder)
     }
 
-    private class HomeDiff(
-        private val selectedList: List<AppInfo>, private val flags: Map<String, Int>
-    ) : DiffUtil.ItemCallback<AppInfo>() {
-        override fun areItemsTheSame(oldItem: AppInfo, newItem: AppInfo): Boolean = oldItem == newItem
-
-        override fun areContentsTheSame(oldItem: AppInfo, newItem: AppInfo): Boolean =
-            flags[oldItem.packageName] == newItem.getFlag(selectedList)
+    class ViewHolder(val binding: ItemHomeBinding) : RecyclerView.ViewHolder(binding.root) {
+        var iconJob: Job? = null
     }
 
-    class ViewHolder(view: View) : RecyclerView.ViewHolder(view)
-
-    interface OnItemClickListener {
-        fun onItemClick(info: AppInfo)
-    }
-
-    interface OnItemLongClickListener {
-        fun onItemLongClick(info: AppInfo): Boolean
-    }
+    interface OnItemClickListener { fun onItemClick(info: AppInfo) }
+    interface OnItemLongClickListener { fun onItemLongClick(info: AppInfo): Boolean }
 }
-
-private fun AppInfo.getFlag(selectedList: List<AppInfo>) =
-    (1 shl state.ordinal) or (this in selectedList).shl(3) or whitelisted.shl(4)
-
-private fun Boolean.shl(bitCount: Int) = if (this) 1 shl bitCount else 0

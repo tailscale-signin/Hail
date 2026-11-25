@@ -169,4 +169,18 @@
     <string name="state_suspended">Suspended</string>
     <string name="state_uninstalled">Uninstalled</string>
     <string name="mode_jailbreak_disable">Jailbreak - Disable</string>
+    <string name="backup_title">Backup and restore</string>
+    <string name="backup_save">Back up to file</string>
+    <string name="backup_restore">Restore from file</string>
+    <string name="backup_replace">Replace configuration</string>
+    <string name="backup_preview">Replace your Hail list and portable settings with %1$d apps and %2$d tags? This includes pins, whitelist entries and auto-freeze preferences. Your working mode and biometric lock stay on this device.</string>
+    <string name="backup_apply_states">Also reapply saved frozen states (%1$d apps)</string>
+    <string name="backup_states_need_mode">To reapply frozen states, choose a working mode on this device first.</string>
+    <string name="backup_saved">Backup saved.</string>
+    <string name="backup_restored">Backup restored.</string>
+    <string name="backup_failed">Could not read or write this backup. Check the file and its location.</string>
+    <string name="already_frozen">%1$s already frozen</string>
+    <string name="already_unfrozen">%1$s already unfrozen</string>
+    <string name="freeze_partial">%1$d changed · %2$d already in that state · %3$d unavailable · %4$d failed</string>
+    <string name="stop_unfreeze">Launch the app to clear Android’s force-stop state.</string>
 </resources>

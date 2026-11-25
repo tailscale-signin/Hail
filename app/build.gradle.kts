@@ -24,8 +24,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 23
         targetSdk = 37
-        versionCode = 36
-        versionName = "1.12.0"
+        versionCode = 37
+        versionName = "1.13.0"
     }
 
     buildTypes {
@@ -45,7 +45,7 @@ android {
                     keyAlias = props.getProperty("keyAlias")
                     keyPassword = props.getProperty("keyPassword")
                 }
-            } else signingConfigs.getByName("debug")
+            } else null
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
             )
