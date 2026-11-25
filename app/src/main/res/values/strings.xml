@@ -239,4 +239,7 @@
     <string name="erase_debug_confirm">Erase the decision log stored by Hail? If recording is on, new events will continue to be recorded.</string>
     <string name="debug_log_cleared">Recorded events erased.</string>
     <string name="debug_clear_failed">Could not erase the decision log.</string>
+    <string name="confirm_unfreeze_launch">Unfreeze and launch</string>
+    <string name="backup_file_contents">Saves a readable list of apps, tags, settings and known frozen states to the location you choose.</string>
+    <string name="debug_file_contents">The exported file can include package names, device details and timestamps.</string>
 </resources>

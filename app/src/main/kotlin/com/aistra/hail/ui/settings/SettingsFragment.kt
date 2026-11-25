@@ -146,6 +146,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
             horizontalDivider()
             preferenceCategory(key = "backup", title = { Text(stringResource(R.string.backup_title)) })
             preference(key = "backup_save", title = { Text(stringResource(R.string.backup_save)) },
+                summary = { Text(stringResource(R.string.backup_file_contents)) },
                 icon = { Icon(Icons.Outlined.Save, contentDescription = null) },
                 onClick = { saveBackup.launch("Hail-backup.json") })
             preference(key = "backup_restore", title = { Text(stringResource(R.string.backup_restore)) },
@@ -176,6 +177,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
                         }.show()
                 })
             preference(key = "export_debug_log", title = { Text(stringResource(R.string.debug_export)) },
+                summary = { Text(stringResource(R.string.debug_file_contents)) },
                 icon = { Icon(Icons.Outlined.SaveAlt, contentDescription = null) },
                 onClick = { saveDebugLog.launch(DecisionLog.suggestedName()) })
             horizontalDivider()

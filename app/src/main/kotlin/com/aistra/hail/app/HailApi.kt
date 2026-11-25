@@ -54,7 +54,7 @@ object HailApi {
     private val packageNamePattern = Regex("[A-Za-z0-9_.]+")
 
     fun actionLabel(action: String?) = when (action) {
-        ACTION_LAUNCH -> R.string.action_launch
+        ACTION_LAUNCH -> R.string.confirm_unfreeze_launch
         ACTION_FREEZE -> R.string.action_freeze
         ACTION_UNFREEZE -> R.string.action_unfreeze
         ACTION_FREEZE_TAG -> R.string.action_freeze_tag
