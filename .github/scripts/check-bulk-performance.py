@@ -34,6 +34,8 @@ for build, code in (("baseline", 40), ("current", 41)):
                 assert not any(e["step"] == "bulk_write_fallback" for e in trace)
                 assert len(calls) == 12 and all(e["method"].endswith(".setComponentEnabledSettings") for e in calls)
                 if action == "freeze":
+                    confirmed = {e["package"] for e in trace if e["step"] == "disable_privacy" and e["disabledAndStopped"]}
+                    assert confirmed == expected
                     assert len(stop) <= 1
                     skipped = {e["package"] for e in trace if e["step"] == "force_stop_skipped"}
                     assert skipped | {e["package"] for e in stop} == expected

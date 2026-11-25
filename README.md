@@ -50,7 +50,7 @@ background.
 
 For a reversible freeze on an unrooted phone, select **Settings → Working mode → Shizuku — Disable** and authorize Hail in Shizuku. Android records a user disable in the current profile. A root-backed disable can use the full disabled state. After an accepted disable, Hail reads Android’s disabled and stopped flags. When the stop flag is clear, Hail requests a force-stop and checks again. A repeated freeze also checks these flags. **Package status** shows the observed state and offers **Verify stop** when available.
 
-Android keeps the installed data, accounts and information already sent to a service. Other profiles, privileged system components and previously shared data have separate lifecycles. A force-stop alone can be cleared by launching the app. For hiding and suspension, the selected owner or provider enforces that mode’s Android policy.
+Android keeps the installed data, accounts and information already sent to a service. Other profiles, privileged system components and previously shared data have separate lifecycles. A force-stop alone can be cleared by launching the app. For hiding and suspension, the selected owner or provider receives the package name and enforces that mode’s Android policy.
 
 Hail excludes its own managed list and settings from automatic backup and device transfer. Diagnostic recording is off by default. When enabled, **Settings → Debug mode** can export or erase local events. The exported log contains package names and device details. Launcher suggestions for recently opened apps are opt-in. Manually pinned shortcuts remain visible in the launcher.
 

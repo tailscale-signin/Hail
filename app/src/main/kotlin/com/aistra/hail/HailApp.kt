@@ -81,7 +81,8 @@ class HailApp : Application() {
                 val mode = HailData.workingMode
                 val start = candidates.isNotEmpty() && withContext(Dispatchers.IO) {
                     candidates.any { pkg -> HPackages.getApplicationInfoOrNull(pkg)?.let {
-                        !AppManager.isAppFrozen(it, mode)
+                        (mode.endsWith(HailData.DISABLE) && it.flags and android.content.pm.ApplicationInfo.FLAG_STOPPED == 0) ||
+                            !AppManager.isAppFrozen(it, mode)
                     } == true }
                 }
                 val desired = start to (start && whitelisted)

@@ -60,13 +60,14 @@ object HIsland {
     }
 
     private fun setAppFrozen(packageName: String, action: String, trace: DecisionTrace?): Boolean {
-        if (ownerApp == null) {
+        val owner = ownerApp
+        if (owner == null) {
             trace?.skipped(packageName, "Island profile owner is unavailable")
             return false
         }
         val intent = Intent(action).apply {
             data = Uri.fromParts("package", packageName, null)
-            setPackage(ownerApp)
+            setPackage(owner)
             addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
             putExtra(
                 EXTRA_CALLER_ID, PendingIntent.getActivity(app, 0, Intent(), PendingIntent.FLAG_IMMUTABLE)
@@ -79,7 +80,7 @@ object HIsland {
                     trace?.event("island_response", packageName, "resultCode" to resultCode)
                     result.complete(resultCode == Activity.RESULT_OK)
                 }
-            }, handler, Activity.RESULT_OK, null, null
+            }, handler, Activity.RESULT_CANCELED, null, null
         )
         return runBlocking {
             runCatching {

@@ -40,6 +40,7 @@ operation("home_all", "freeze", check("permission", serviceUid=uid, granted=True
           check("enabled_setting", package=clock, requestedSetting=disabled),
           check("android_call", package=clock, requestedSetting=disabled),
           check("readback", package=clock, observedSetting=disabled, verified=True),
+          check("disable_privacy", package=clock, disabledAndStopped=True),
           check("outcome", package=clock, result="changed"))
 operation("home_all", "freeze", check("skipped", package=clock, reason="Already in the requested state"),
           check("batch_result", changed=0, unchanged=2))

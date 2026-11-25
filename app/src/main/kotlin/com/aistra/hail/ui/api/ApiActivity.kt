@@ -77,8 +77,8 @@ open class ApiActivity : FragmentActivity() {
             setContent { }
             val action = HailApi.parse(request)
             setIntent(action)
-            if (!unlocked()) return@enqueue true
             if (!internal && action.action != Intent.ACTION_SHOW_APP_INFO && !confirm(action)) return@enqueue true
+            if (!unlocked()) return@enqueue true
             handleAction(action.action)
         } catch (e: Exception) {
             if (e !is CancellationException) DecisionLog.begin(requestSource, "dispatch")?.event("dispatch_failed", null,
@@ -181,7 +181,7 @@ open class ApiActivity : FragmentActivity() {
     @Composable
     private fun ClickableItem(icon: ImageVector, @StringRes title: Int, onClick: suspend () -> Unit) = Row(
         modifier = Modifier.fillMaxWidth().clickable(onClick = {
-            enqueue { onClick(); true }
+            enqueue { if (unlocked()) onClick(); true }
         }), verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(

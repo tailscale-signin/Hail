@@ -69,10 +69,11 @@ object AppManager {
                     trace?.event("transition", name, "reason" to "Privilege allows full disable of a previously user-disabled package")
                     false
                 }
+                pkg.inferredSetting && targetSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED -> false
                 // A manifest default is not a durable, explicit user disable.
-                setting == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT && targetSetting in listOf(
-                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
-                ) -> false
+                setting == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT &&
+                    (targetSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
+                        targetSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) -> false
                 else -> !pkg.canDisable(setting)
             }
         } else pkg.info?.let { isAppFrozen(it, mode) } == true
@@ -165,17 +166,19 @@ object AppManager {
                             }
                             succeeded
                         })
-                    val unconfirmed = if (frozen && mode.endsWith(HailData.DISABLE)) {
-                        lookup.unconfirmedDisabled(applied.changed + applied.unchanged)
-                    } else emptySet()
+                    val checks = if (frozen && mode.endsWith(HailData.DISABLE)) {
+                        lookup.verifyDisabled(applied.changed + applied.unchanged)
+                    } else PackageLookup.StopChecks()
+                    val unconfirmed = checks.unconfirmed
+                    val repaired = applied.unchanged.intersect(checks.repaired)
                     val partialMessage = if (unconfirmed.isEmpty()) null else app.getString(R.string.disable_unconfirmed)
                     for (pkg in unconfirmed) failureReasons[pkg] = requireNotNull(partialMessage)
-                    val result = if (unconfirmed.isEmpty()) applied else applied.copy(
-                        changed = applied.changed - unconfirmed,
-                        unchanged = applied.unchanged - unconfirmed,
+                    val result = if (unconfirmed.isEmpty() && repaired.isEmpty()) applied else applied.copy(
+                        changed = applied.changed - unconfirmed + repaired,
+                        unchanged = applied.unchanged - unconfirmed - repaired,
                         failed = applied.failed + unconfirmed
                     )
-                    if (applied.changed.isNotEmpty() || unconfirmed.isNotEmpty()) {
+                    if (applied.changed.isNotEmpty() || repaired.isNotEmpty() || unconfirmed.isNotEmpty()) {
                         changed.tryEmit(Unit)
                         app.setAutoFreezeService()
                     }

@@ -29,6 +29,22 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class DeviceFreezeTest {
+    @Test fun privateDefaultsAndBrandResourcesArePackaged() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val pm = context.packageManager
+        assertEquals(0, context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP)
+        assertEquals(PackageManager.PERMISSION_DENIED, pm.checkPermission(Manifest.permission.INTERNET, context.packageName))
+        val internal = android.content.ComponentName(context, com.aistra.hail.ui.api.InternalActionActivity::class.java)
+        assertFalse(pm.getActivityInfo(internal, 0).exported)
+        assertTrue(pm.getActivityInfo(android.content.ComponentName(context, ApiActivity::class.java), 0).exported)
+        assertNotNull(androidx.core.content.res.ResourcesCompat.getFont(context, com.aistra.hail.R.font.proxima_nova))
+        val config = android.content.res.Configuration(context.resources.configuration)
+        config.uiMode = (config.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK.inv()) or
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val dark = context.createConfigurationContext(config)
+        assertEquals(android.graphics.Color.rgb(0, 255, 222), dark.getColor(com.aistra.hail.R.color.md_theme_primary))
+    }
+
     @Test fun freezeRepeatThenThawLaunchAndRestoreFromBackup() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val ctx = instrumentation.targetContext

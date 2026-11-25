@@ -2,6 +2,7 @@ package com.aistra.hail.ui.apps
 
 import android.app.Application
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
@@ -20,7 +21,7 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
     val isRefreshing = MutableLiveData(false)
     val displayApps = MutableLiveData<List<InstalledRow>>()
     // Entries live for a single package refresh. Searching and sorting reuse the Android metadata.
-    private class Entry(val record: HPackages.UserPackage, val info: ApplicationInfo, pm: android.content.pm.PackageManager) {
+    private class Entry(val record: HPackages.UserPackage, val info: ApplicationInfo, pm: PackageManager) {
         val label by lazy { info.loadLabel(pm).toString() }
         val packageInfo by lazy { HPackages.getUnhiddenPackageInfoOrNull(info.packageName) }
     }

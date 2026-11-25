@@ -1,5 +1,7 @@
 package com.aistra.hail.utils
 
+import android.content.ClipDescription
+import android.os.PersistableBundle
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -36,7 +38,11 @@ object HUI {
     fun openLink(url: String): Boolean = startActivity(uri = url)
 
     fun copyText(text: String) = app.getSystemService<ClipboardManager>()
-        ?.setPrimaryClip(ClipData.newPlainText(app.getString(R.string.app_name), text))
+        ?.setPrimaryClip(ClipData.newPlainText(app.getString(R.string.app_name), text).apply {
+            if (HTarget.T) description.extras = PersistableBundle().apply {
+                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+            }
+        })
 
     fun pasteText(): String? = app.getSystemService<ClipboardManager>()?.primaryClip?.getItemAt(0)?.text?.toString()
 }
