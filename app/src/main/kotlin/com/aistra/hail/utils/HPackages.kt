@@ -132,16 +132,23 @@ object HPackages {
         trace?.event("permission", packageName, "appUid" to android.os.Process.myUid(),
             "permission" to "CHANGE_COMPONENT_ENABLED_STATE", "granted" to
                 (app.checkSelfPermission("android.permission.CHANGE_COMPONENT_ENABLED_STATE") == PackageManager.PERMISSION_GRANTED))
-        if (disabled) {
-            val permitted = app.checkSelfPermission("android.permission.FORCE_STOP_PACKAGES") == PackageManager.PERMISSION_GRANTED
-            val stopped = if (permitted) forceStopApp(packageName, trace) else null
-            trace?.event("force_stop", packageName, "permitted" to permitted, "succeeded" to stopped)
-        }
         trace?.event("android_call", packageName, "method" to "PackageManager.setApplicationEnabledSetting", "requestedSetting" to newState)
         app.packageManager.setApplicationEnabledSetting(packageName, newState, 0)
         val actual = app.packageManager.getApplicationEnabledSetting(packageName)
         trace?.event("readback", packageName, "reader" to "PackageManager", "observedSetting" to actual, "verified" to (actual == newState))
-        return actual == newState
+        if (actual != newState) return false
+        if (disabled && app.checkSelfPermission("android.permission.FORCE_STOP_PACKAGES") == PackageManager.PERMISSION_GRANTED) {
+            val info = getApplicationInfoOrNull(packageName, INSTALLED_FOR_USER)
+            if (info != null && info.flags and ApplicationInfo.FLAG_STOPPED != 0) {
+                trace?.event("force_stop_skipped", packageName, "reason" to "Android already reports the package stopped")
+            } else {
+                val stopped = forceStopApp(packageName, trace)
+                trace?.event("force_stop", packageName, "succeeded" to stopped)
+            }
+        } else if (disabled) {
+            trace?.event("force_stop_skipped", packageName, "reason" to "FORCE_STOP_PACKAGES permission unavailable")
+        }
+        return true
     }
 
     @RequiresApi(Build.VERSION_CODES.P)

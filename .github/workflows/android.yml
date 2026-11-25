@@ -14,6 +14,7 @@ on:
       - '!.github/scripts/test-device-actions.sh'
       - '!.github/scripts/check-device-results.py'
       - '!.github/scripts/check-decision-log.py'
+      - '!.github/scripts/check-bulk-performance.py'
 
 permissions:
   contents: read

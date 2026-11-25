@@ -7,7 +7,7 @@ path, server, expected_version = sys.argv[1:]
 header, *events = [json.loads(line) for line in Path(path).read_text().splitlines()]
 uid, disabled = (0, 2) if server == "root" else (2000, 3)
 assert header["schema"] == 1 and header["recordingAtExport"] is False
-assert header["version"] == expected_version and header["build"] == 40 and header["sdk"] == 36 and header["writeErrorsThisProcess"] == 0
+assert header["version"] == expected_version and header["build"] == 41 and header["sdk"] == 36 and header["writeErrorsThisProcess"] == 0
 assert len({e["session"] for e in events if e["step"] == "session_started"}) >= 2
 assert events[-1]["step"] == "logging_stopped"
 for session in {e["session"] for e in events}:
@@ -49,10 +49,16 @@ operation("home_all", "unfreeze", check("android_call", package=service, request
 transition = operation("home_status", "freeze", check("enabled_setting", package=service, beforeSetting=4),
                        check("android_call", package=service, requestedSetting=disabled))
 if server == "shell":
+    batch = operation("home_all", "freeze", check("bulk_write", size=2), check("batch_result", changed=2))
+    assert not contains(batch, "bulk_write_fallback")
+    operation("home_all", "freeze", check("enabled_setting", package=service, beforeSetting=4),
+              check("outcome", package=clock, result="changed"), check("outcome", package=service, result="failed"),
+              check("batch_result", changed=1, failed=1))
     assert contains(transition, "readback", package=service, observedSetting=4, backendAccepted=False)
     assert any(e["step"] == "android_error" and e["errorType"].endswith("SecurityException")
                and "Shell cannot change component state" in e["error"] for e in transition)
     assert contains(transition, "outcome", package=service, result="failed")
+    assert not any(e["step"] == "force_stop" and e.get("package") == service for e in transition)
 else:
     assert contains(transition, "readback", package=service, observedSetting=2, verified=True)
     operation("home_status", "freeze", check("enabled_setting", package=service, beforeSetting=3),

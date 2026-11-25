@@ -35,26 +35,29 @@ class PagerAdapter : ListAdapter<HomeRow, PagerAdapter.ViewHolder>(object : Diff
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val row = getItem(position)
         val frozen = row.state == AppInfo.State.FROZEN
+        val dim = frozen || row.state == AppInfo.State.NOT_INSTALLED
         holder.iconJob?.cancel()
         with(holder.binding) {
             root.setOnClickListener { onItemClickListener.onItemClick(row.info) }
             root.setOnLongClickListener { onItemLongClickListener.onItemLongClick(row.info) }
             val ctx = root.context
             if (row.application != null) {
-                holder.iconJob = AppIconCache.loadIconBitmapAsync(ctx, row.application, myUserId, appIcon, row.grayscale && frozen)
+                holder.iconJob = AppIconCache.loadIconBitmapAsync(ctx, row.application, myUserId, appIcon, row.grayscale && dim)
             } else {
                 appIcon.setImageDrawable(ctx.packageManager.defaultActivityIcon)
                 appIcon.colorFilter = null
             }
             appName.text = buildString {
-                if (!row.grayscale && frozen) append("❄️")
+                if (!row.grayscale && dim) append("❄️")
                 if (row.whitelisted) append("🔒")
                 append(row.label)
             }
-            appName.isEnabled = !row.grayscale || !frozen
+            appName.isEnabled = !row.grayscale || !dim
             appName.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
             val unavailable = row.state == AppInfo.State.NOT_FOUND
-            appAvailability.isVisible = unavailable
+            appAvailability.isVisible = row.state.unavailable
+            appAvailability.setText(if (row.state == AppInfo.State.NOT_INSTALLED)
+                com.aistra.hail.R.string.package_inactive_here else com.aistra.hail.R.string.package_unavailable)
             if (row.selected || unavailable) {
                 appName.setTextColor(MaterialColors.getColor(appName, if (row.selected)
                     androidx.appcompat.R.attr.colorPrimary else com.google.android.material.R.attr.colorOnErrorContainer))

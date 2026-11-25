@@ -121,7 +121,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         }
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                AppManager.changes.collect { updateCurrentList() }
+                AppManager.changes.collect { if (operations == 0) updateCurrentList() }
             }
         }
         return binding.root
@@ -172,7 +172,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                     ensureActive()
                     val pkg = row.info.packageName
                     val listed = packages[pkg]
-                    val record = if (listed?.installed == true) listed else lookup.find(pkg)
+                    val record = if (listed?.installed == true) listed else lookup.fromInventory(pkg)
                     val application = record?.info
                     val label = application?.loadLabel(app.packageManager)?.toString() ?: pkg
                     if (search.isNotEmpty() && !(nineKey && NineKeySearch.search(search, pkg, label))
@@ -184,6 +184,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                             "installedForUser" to record?.installed, "hasMetadata" to (application != null),
                             "system" to application?.let(HPackages::isSystemApp), "reason" to when (state) {
                                 AppInfo.State.NOT_FOUND -> "No current-user installation evidence"
+                                AppInfo.State.NOT_INSTALLED -> "Retained metadata; no installed app for this user"
                                 AppInfo.State.FROZEN -> "Package matches the selected frozen-state check"
                                 AppInfo.State.UNFROZEN -> "Package is available under the selected mode"
                             })
@@ -193,7 +194,8 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             }
             lastLoggedView = loggingView
             trace?.event("list_displayed", null, "managedInView" to snapshot.size, "visible" to rows.size,
-                "unavailable" to rows.count { it.state == AppInfo.State.NOT_FOUND })
+                "unavailable" to rows.count { it.state == AppInfo.State.NOT_FOUND },
+                "notInstalled" to rows.count { it.state == AppInfo.State.NOT_INSTALLED })
             binding.empty.isVisible = rows.isEmpty()
             showSelection(rows)
             binding.refresh.isRefreshing = operations > 0
@@ -228,7 +230,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             updateBarTitle()
             return
         }
-        if (pagerAdapter.currentList.find { it.info == info }?.state == AppInfo.State.NOT_FOUND) {
+        if (pagerAdapter.currentList.find { it.info == info }?.state?.unavailable == true) {
             DecisionLog.begin("home", "inspect_unavailable", pkg = info.packageName)?.event("status_opened", info.packageName,
                 "reason" to "Home row has no current-user installation evidence")
             showPackageStatus(info.packageName)
@@ -239,7 +241,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
 
     override fun onItemLongClick(info: AppInfo): Boolean {
         val row = pagerAdapter.currentList.firstOrNull { it.info == info } ?: return false
-        if (row.state == AppInfo.State.NOT_FOUND && (!multiselect || info !in selectedList)) {
+        if (row.state.unavailable && (!multiselect || info !in selectedList)) {
             DecisionLog.begin("home", "inspect_unavailable", pkg = info.packageName)?.event("status_opened", info.packageName,
                 "reason" to "Home row has no current-user installation evidence")
             showPackageStatus(info.packageName)
@@ -546,32 +548,45 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                 }
                 val result = AppManager.changeFrozen(packages, frozen, mode = mode, trace = trace)
                 if (removeAfter) {
-                    val removable = packages.filter(result::reachedTarget)
+                    val removable = packages.filter { result.reachedTarget(it, frozen) }
                     if (removable.isNotEmpty()) {
                         removable.forEach { HailData.removeCheckedApp(it, false) }
                         HailData.saveApps()
                     }
                 }
                 val message = AppManager.resultMessage(result, frozen)
-                if (isResumed && packages.size == 1 && (result.missing.isNotEmpty() || result.failed.isNotEmpty())) {
+                val needsAttention = result.missing.isNotEmpty() || result.failed.isNotEmpty() || (!frozen && result.notInstalled.isNotEmpty())
+                if (isResumed && packages.size == 1 && needsAttention) {
                     showPackageStatus(packages.single(), message.takeIf { result.failed.isNotEmpty() })
-                } else if (isResumed && packages.size > 1 && (result.missing.isNotEmpty() || result.failed.isNotEmpty())) {
+                } else if (isResumed && packages.size > 1 && needsAttention) {
                     val details = buildString {
                         append(message)
+                        if (result.failed.isNotEmpty()) {
+                            append("\n\n").append(getString(R.string.package_change_refused))
+                            for (pkg in result.failed) {
+                                append('\n').append(pkg)
+                                result.failureReasons[pkg]?.let { append("\n").append(it) }
+                            }
+                        }
                         for ((title, names) in listOf(R.string.package_unavailable to result.missing,
-                            R.string.package_change_refused to result.failed)) {
+                            R.string.package_not_installed_here to result.notInstalled)) {
                             if (names.isNotEmpty()) append("\n\n").append(getString(title)).append('\n').append(names.joinToString("\n"))
                         }
                     }
                     MaterialAlertDialogBuilder(host).setTitle(if (frozen) R.string.action_freeze else R.string.action_unfreeze)
                         .setMessage(details).setPositiveButton(android.R.string.ok, null)
-                        .setNeutralButton(R.string.copy_details) { _, _ -> HUI.copyText(details) }.show()
+                        .setNeutralButton(R.string.copy_details) { _, _ -> HUI.copyText(details) }
+                        .apply {
+                            result.failed.singleOrNull()?.let { pkg ->
+                                setNegativeButton(R.string.package_status_controls) { _, _ -> showPackageStatus(pkg, result.failureReasons[pkg]) }
+                            }
+                        }.show()
                 } else HUI.showToast(message)
             } finally {
                 operations--
                 if (_binding === origin) {
                     origin.refresh.isRefreshing = operations > 0
-                    updateCurrentList()
+                    if (operations == 0) updateCurrentList()
                 }
             }
         }

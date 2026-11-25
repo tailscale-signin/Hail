@@ -186,8 +186,8 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
         viewLifecycleOwner.lifecycleScope.launch {
             val result = AppManager.changeFrozen(listOf(pkg), disable, mode = mode, trace = trace)
             when {
-                result.reachedTarget(pkg) -> HUI.showToast(AppManager.resultMessage(result, disable))
-                pkg in result.missing -> HUI.showToast(R.string.app_not_installed)
+                result.reachedTarget(pkg, disable) -> HUI.showToast(AppManager.resultMessage(result, disable))
+                pkg in result.missing || pkg in result.notInstalled -> HUI.showToast(R.string.app_not_installed)
                 isResumed -> MaterialAlertDialogBuilder(requireContext())
                     .setTitle(info.loadLabel(app.packageManager))
                     .setMessage(AppManager.resultMessage(result, disable))

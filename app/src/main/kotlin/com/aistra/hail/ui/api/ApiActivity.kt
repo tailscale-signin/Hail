@@ -255,8 +255,8 @@ class ApiActivity : ComponentActivity() {
             throw SecurityException("Package not checked")
         }
         val result = AppManager.changeFrozen(listOf(pkg), frozen, trace = trace)
-        if (pkg in result.missing) throw NameNotFoundException(getString(R.string.app_not_installed))
-        if (!result.reachedTarget(pkg)) throw IllegalStateException(AppManager.resultMessage(result, frozen))
+        if (pkg in result.missing || (!frozen && pkg in result.notInstalled)) throw NameNotFoundException(getString(R.string.app_not_installed))
+        if (!result.reachedTarget(pkg, frozen)) throw IllegalStateException(AppManager.resultMessage(result, frozen))
         HUI.showToast(AppManager.resultMessage(result, frozen))
     }
 

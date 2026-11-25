@@ -74,7 +74,7 @@
     <string name="package_shell_refused">Android refused the ADB shell change for %1$s in its current state. Open App info to see which controls Android offers.</string>
     <string name="package_disabled">Android reports this app is disabled for this user.</string>
     <string name="package_unknown_here">Android could not find this package for this user.</string>
-    <string name="package_retained_here">Android still has a record for this package. Current-profile queries could not confirm an installed app to disable. This can happen when a preinstalled app has been removed for this user.</string>
+    <string name="package_retained_here">Android retains this package’s record. There is no installed copy in this profile to disable.</string>
     <string name="package_native_guidance">Open App info to use Android’s controls, or authorize Shizuku for Hail to disable or enable the app here.</string>
     <string name="privileged_mode_permission">This mode requires Hail itself to have Android’s privileged app-management permission. With the regular APK, start Shizuku and choose Shizuku - Disable.</string>
     <string name="disable_with_shizuku">Disable with Shizuku</string>
@@ -218,4 +218,9 @@
     <string name="debug_export">Export debug log</string>
     <string name="debug_export_saved">Debug log saved</string>
     <string name="debug_export_failed">Couldn’t save the debug log</string>
+    <string name="package_inactive_here">Inactive here</string>
+    <string name="package_not_installed_here">Not installed for this user</string>
+    <string name="package_until_used_shell">Android restricts ADB-backed Shizuku from changing this temporary state. Open App info to see the controls available on this device.</string>
+    <string name="freeze_counts_inactive">%1$d changed · %2$d already frozen · %3$d already inactive in this profile · %4$d unknown · %5$d failed</string>
+    <string name="unfreeze_counts_not_installed">%1$d changed · %2$d already in that state · %3$d not installed in this profile · %4$d unknown · %5$d failed</string>
 </resources>

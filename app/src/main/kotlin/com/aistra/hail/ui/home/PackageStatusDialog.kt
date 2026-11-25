@@ -111,7 +111,10 @@ class PackageStatusDialog : DialogFragment() {
         }
         binding.report.text = listOfNotNull(pkg, getString(R.string.package_user_mode, HPackages.myUserId, modeName),
             shizukuUid?.let { getString(if (it == 0) R.string.package_shizuku_root else R.string.package_shizuku_uid, it) },
-            getString(status), if (enabled != null && method == null) getString(R.string.package_native_guidance) else null,
+            getString(status),
+            if (method == HailData.MODE_SHIZUKU_DISABLE && shizukuUid == 2000 &&
+                setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED) getString(R.string.package_until_used_shell) else null,
+            if (enabled != null && method == null) getString(R.string.package_native_guidance) else null,
             message).joinToString("\n\n")
         alert.getButton(DialogInterface.BUTTON_POSITIVE).isVisible = record != null
         binding.removeFromHome.isVisible = enabled == null && HailData.isChecked(pkg)
@@ -141,7 +144,7 @@ class PackageStatusDialog : DialogFragment() {
         binding.enableInstead.isEnabled = false
         work = lifecycleScope.launch {
             val result = AppManager.changeFrozen(listOf(pkg), disable, mode = mode, source = "home_status")
-            message = if (result.reachedTarget(pkg)) null else AppManager.resultMessage(result, disable)
+            message = if (result.reachedTarget(pkg, disable)) null else AppManager.resultMessage(result, disable)
             render()
         }
     }

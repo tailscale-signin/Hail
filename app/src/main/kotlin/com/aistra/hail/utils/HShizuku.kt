@@ -75,26 +75,33 @@ object HShizuku {
         granted
     }.onFailure { trace?.error("permission_check_failed", null, it) }.getOrDefault(false)
 
-    class Packages {
-        private val pm = asInterface("android.content.pm.IPackageManager", "package")
+    class Packages internal constructor(private val pm: Any) {
+        constructor() : this(asInterface("android.content.pm.IPackageManager", "package"))
         private val flagType = if (HTarget.T) Long::class.javaPrimitiveType!! else Int::class.javaPrimitiveType!!
         // Installed for this user, including apps with disabled launcher components.
         private val flags: Any = if (HTarget.T) HPackages.INSTALLED_FOR_USER.toLong() else HPackages.INSTALLED_FOR_USER
         private val user = HPackages.myUserId
         private val getSetting by lazy { pm.javaClass.getMethod("getApplicationEnabledSetting", String::class.java, Int::class.java) }
+        private val setSetting by lazy { pm.javaClass.getMethod(
+            "setApplicationEnabledSetting", String::class.java, Int::class.java, Int::class.java,
+            Int::class.java, String::class.java
+        ) }
+        private var batchUsable = HTarget.T
         val disableSetting by lazy {
             if (isRoot) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
         }
 
         fun setting(pkg: String) = getSetting.invoke(pm, pkg, user) as Int
 
-        fun find(pkg: String): HPackages.UserPackage? {
+        private fun application(pkg: String): ApplicationInfo? {
             val result = if (HTarget.P) HiddenApiBypass.invoke(pm.javaClass, pm, "getApplicationInfo", pkg, flags, user)
             else pm.javaClass.getMethod("getApplicationInfo", String::class.java, flagType, Int::class.java)
                 .invoke(pm, pkg, flags, user)
-            val info = result as? ApplicationInfo ?: return null
-            return HPackages.UserPackage(info, true, setting(pkg))
+            return result as? ApplicationInfo
         }
+
+        fun find(pkg: String): HPackages.UserPackage? =
+            application(pkg)?.let { HPackages.UserPackage(it, true, setting(pkg)) }
 
         fun installed(): List<ApplicationInfo> {
             val entries = if (HTarget.P) {
@@ -107,22 +114,80 @@ object HShizuku {
             return (entries as List<*>).filterIsInstance<ApplicationInfo>()
         }
 
-        fun setDisabled(packageName: String, disabled: Boolean, trace: DecisionTrace? = null): Boolean {
-            val newState = if (disabled) disableSetting else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-            if (disabled) {
-                val stopped = forceStopApp(packageName, trace)
-                trace?.event("force_stop", packageName, "succeeded" to stopped)
+        fun setDisabled(packages: List<String>, disabled: Boolean, singleWrites: Set<String>, trace: DecisionTrace?,
+                        onFailure: (String, Exception) -> Unit): Set<String> {
+            val target = if (disabled) disableSetting else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            // Shell-restricted starting states are submitted separately, so they cannot reject an ordinary batch.
+            val group = if (batchUsable && packages.size > 1) packages.filterNot(singleWrites::contains) else emptyList()
+            val attempted = if (group.size > 1) group.toHashSet() else emptySet()
+            val applied = if (attempted.isNotEmpty() && HTarget.T) try {
+                trace?.event("bulk_write", null, "size" to group.size, "requestedSetting" to target)
+                for (pkg in group) trace?.event("android_call", pkg, "method" to "IPackageManager.setComponentEnabledSettings",
+                    "requestedSetting" to target, "callingPackage" to BuildConfig.APPLICATION_ID, "user" to user)
+                BatchApi.write(pm, group, target, user)
+                true
+            } catch (e: Exception) {
+                trace?.error("bulk_write_fallback", null, e)
+                if (e is NoSuchMethodException || e is IllegalAccessException) batchUsable = false
+                false
+            } else false
+
+            val verified = linkedSetOf<String>()
+            for (pkg in packages) {
+                try {
+                    // Verify the group even when Android returned normally. An OEM can ignore a write.
+                    val inGroup = pkg in attempted
+                    val observed = if (inGroup) runCatching { setting(pkg) }
+                        .onFailure { trace?.error("bulk_readback_failed", pkg, it) }.getOrNull() else null
+                    val actual = if (observed == target) {
+                        if (!applied) trace?.event("write_reconciled", pkg, "observedSetting" to observed)
+                        target
+                    } else {
+                        if (applied && inGroup) trace?.event("bulk_readback_retry", pkg,
+                            "observedSetting" to observed, "requestedSetting" to target)
+                        trace?.event("android_call", pkg, "method" to "IPackageManager.setApplicationEnabledSetting",
+                            "requestedSetting" to target, "callingPackage" to BuildConfig.APPLICATION_ID, "user" to user)
+                        setSetting.invoke(pm, pkg, target, 0, user, BuildConfig.APPLICATION_ID)
+                        setting(pkg)
+                    }
+                    trace?.event("readback", pkg, "reader" to "Shizuku IPackageManager", "observedSetting" to actual,
+                        "verified" to (actual == target))
+                    if (actual == target) verified.add(pkg)
+                    else onFailure(pkg, IllegalStateException("Android reported enabled setting $actual after requesting $target"))
+                } catch (e: Exception) {
+                    onFailure(pkg, e)
+                    if (trace != null) runCatching { setting(pkg) }.onSuccess { actual ->
+                        trace.event("readback", pkg, "reader" to "Shizuku IPackageManager", "observedSetting" to actual,
+                            "backendAccepted" to false)
+                    }.onFailure { trace.error("readback_failed", pkg, it) }
+                }
             }
-            trace?.event("android_call", packageName, "method" to "IPackageManager.setApplicationEnabledSetting",
-                "requestedSetting" to newState, "callingPackage" to BuildConfig.APPLICATION_ID, "user" to user)
-            pm.javaClass.getMethod(
-                "setApplicationEnabledSetting", String::class.java, Int::class.java, Int::class.java,
-                Int::class.java, String::class.java
-            ).invoke(pm, packageName, newState, 0, user, BuildConfig.APPLICATION_ID)
-            val actual = setting(packageName)
-            trace?.event("readback", packageName, "reader" to "Shizuku IPackageManager", "observedSetting" to actual,
-                "verified" to (actual == newState))
-            return actual == newState
+            if (disabled && verified.isNotEmpty()) stopRunningPackages(verified, trace)
+            return verified
+        }
+
+        private fun stopRunningPackages(verified: Set<String>, trace: DecisionTrace?) {
+            // Inspect fresh flags after disabling. A rejected write must never force-stop the app.
+            val inventory = if (verified.size >= 8) runCatching { installed().associateBy { it.packageName } }
+                .onFailure { trace?.error("stop_inventory_failed", null, it) }.getOrNull() else null
+            for (pkg in verified) {
+                val info = inventory?.get(pkg) ?: runCatching { application(pkg) }.getOrNull()
+                if (info != null && info.flags and ApplicationInfo.FLAG_STOPPED != 0) {
+                    trace?.event("force_stop_skipped", pkg, "reason" to "Android already reports the package stopped")
+                } else {
+                    val stopped = forceStopApp(pkg, trace)
+                    trace?.event("force_stop", pkg, "succeeded" to stopped)
+                }
+            }
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private object BatchApi {
+        fun write(pm: Any, packages: List<String>, target: Int, user: Int) {
+            val type = PackageManager.ComponentEnabledSetting::class.java
+            val settings = packages.map { HiddenApiBypass.newInstance(type, it, target, 0) }
+            HiddenApiBypass.invoke(pm.javaClass, pm, "setComponentEnabledSettings", settings, user, BuildConfig.APPLICATION_ID)
         }
     }
 

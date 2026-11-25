@@ -8,9 +8,12 @@ data class FreezeResult(
     val missing: Set<String>,
     val failed: Set<String>,
     val singleLabel: String? = null,
-    val failureMessage: String? = null
+    val failureMessage: String? = null,
+    val notInstalled: Set<String> = emptySet(),
+    val failureReasons: Map<String, String> = emptyMap()
 ) {
-    fun reachedTarget(pkg: String) = pkg in changed || pkg in unchanged
+    fun reachedTarget(pkg: String, freezing: Boolean = false) =
+        pkg in changed || pkg in unchanged || (freezing && pkg in notInstalled)
 }
 
 internal object FreezeBatch {
@@ -20,6 +23,7 @@ internal object FreezeBatch {
         val changed = linkedSetOf<String>()
         val unchanged = linkedSetOf<String>()
         val missing = linkedSetOf<String>()
+        val notInstalled = linkedSetOf<String>()
         val failed = linkedSetOf<String>()
         val seen = HashSet<String>()
         for (pkg in packages) {
@@ -33,6 +37,10 @@ internal object FreezeBatch {
             }
             val current = state(pkg)
             when {
+                current == AppInfo.State.NOT_INSTALLED -> {
+                    notInstalled.add(pkg)
+                    trace?.skipped(pkg, "Retained for this device, not installed for this Android user")
+                }
                 current == AppInfo.State.NOT_FOUND -> {
                     missing.add(pkg)
                     trace?.skipped(pkg, "No installed package for this Android user")
@@ -56,6 +64,6 @@ internal object FreezeBatch {
                 trace?.event("outcome", pkg, "result" to if (success) "changed" else "failed")
             }
         }
-        return FreezeResult(changed, unchanged, missing, failed)
+        return FreezeResult(changed, unchanged, missing, failed, notInstalled = notInstalled)
     }
 }

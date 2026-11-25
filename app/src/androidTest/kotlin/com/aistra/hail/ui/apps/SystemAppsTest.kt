@@ -197,13 +197,58 @@ class SystemAppsTest {
         }
     }
 
+    @Suppress("unused", "UNUSED_PARAMETER")
+    class PartialPackageManager(private val throwAfterDelivery: Boolean) {
+        val states = mutableMapOf("applied" to 3, "retry" to 3, "refused" to 3)
+        val singleCalls = mutableListOf<String>()
+        var batchCalls = 0
+
+        fun getApplicationEnabledSetting(pkg: String, userId: Int): Int = states.getValue(pkg)
+
+        fun setComponentEnabledSettings(settings: List<*>, userId: Int, caller: String) {
+            batchCalls++
+            states["applied"] = PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            if (throwAfterDelivery) throw IllegalStateException("Test service disconnected after partial delivery")
+        }
+
+        fun setApplicationEnabledSetting(pkg: String, target: Int, flags: Int, userId: Int, caller: String) {
+            singleCalls.add(pkg)
+            if (pkg == "retry") states[pkg] = target
+        }
+    }
+
+    @Test fun retriesOnlyUnappliedPackagesAfterAcknowledgedOrInterruptedBatch() {
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+        for (interrupted in listOf(false, true)) {
+            val service = PartialPackageManager(interrupted)
+            val failures = mutableListOf<String>()
+            val verified = HShizuku.Packages(service).setDisabled(service.states.keys.toList(), false, emptySet(), null) { pkg, _ ->
+                failures.add(pkg)
+            }
+            assertEquals(1, service.batchCalls)
+            assertEquals(listOf("retry", "refused"), service.singleCalls)
+            assertEquals(setOf("applied", "retry"), verified)
+            assertEquals(listOf("refused"), failures)
+        }
+    }
+
     @Test fun deniedSystemAppChangePreservesEnabledState() = runBlocking {
         val pkg = fixture().packageName
         val oldSetting = pm.getApplicationEnabledSetting(pkg)
         val oldMode = prefs.getString(HailData.WORKING_MODE, null)
         try {
             prefs.edit().putString(HailData.WORKING_MODE, HailData.MODE_PRIVAPP_DISABLE).commit()
-            val denied = AppManager.changeFrozen(listOf(pkg), true)
+            ctx.startActivity(requireNotNull(pm.getLaunchIntentForPackage(pkg)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            assertTrue(device.wait(Until.hasObject(By.pkg(pkg)), 10_000))
+            fun stopped() = pm.getApplicationInfo(pkg, 0).flags and ApplicationInfo.FLAG_STOPPED != 0
+            assertFalse(stopped())
+            instrumentation.uiAutomation.adoptShellPermissionIdentity("android.permission.FORCE_STOP_PACKAGES")
+            val denied = try {
+                AppManager.changeFrozen(listOf(pkg), true)
+            } finally {
+                instrumentation.uiAutomation.dropShellPermissionIdentity()
+            }
+            assertFalse("A denied disable must leave a running app alone", stopped())
             assertEquals(setOf(pkg), denied.failed)
             assertTrue(denied.changed.isEmpty())
             val message = AppManager.resultMessage(denied, true)
@@ -211,6 +256,7 @@ class SystemAppsTest {
             assertTrue("Expected the platform refusal", message.lineSequence().drop(1).any { it.contains(pkg) })
             assertEquals(oldSetting, pm.getApplicationEnabledSetting(pkg))
         } finally {
+            device.pressHome()
             prefs.edit().putString(HailData.WORKING_MODE, oldMode).commit()
         }
         Unit
@@ -232,12 +278,12 @@ class SystemAppsTest {
             assertTrue(shell("pm list packages -u --user $user $pkg").lineSequence().any { it == installed })
             assertEquals(false, HPackages.findForUser(pkg)?.installed)
             assertEquals(false, HPackages.packagesForUser()[pkg]?.installed)
-            assertEquals(setOf(pkg), runBlocking { AppManager.changeFrozen(listOf(pkg), true) }.missing)
+            assertEquals(setOf(pkg), runBlocking { AppManager.changeFrozen(listOf(pkg), true) }.notInstalled)
             assertFalse(listed())
             instrumentation.runOnMainSync { HailData.checkedList.clear(); HailData.checkedList.add(AppInfo(pkg)) }
             ActivityScenario.launch(MainActivity::class.java).use {
                 await(By.res(ctx.packageName, "nav_home")).click()
-                await(text(R.string.package_unavailable))
+                await(text(R.string.package_inactive_here))
                 val row = By.res(ctx.packageName, "app_name").text(label)
                 await(row).longClick()
                 fun report(id: Int) = By.res(ctx.packageName, "report").textContains(ctx.getString(id))
@@ -250,7 +296,7 @@ class SystemAppsTest {
                 await(report(R.string.package_enabled))
                 device.pressBack()
                 await(row)
-                assertTrue(device.wait(Until.gone(text(R.string.package_unavailable)), 10_000))
+                assertTrue(device.wait(Until.gone(text(R.string.package_inactive_here)), 10_000))
             }
             Log.i("HailSystemApp", "Verified retained $pkg, no mutation while absent, restored current-user Home controls")
         } finally {
@@ -265,7 +311,7 @@ class SystemAppsTest {
         val missingFlag = ApplicationInfo(info).apply { flags = flags and ApplicationInfo.FLAG_INSTALLED.inv() }
         val verified = HPackages.UserPackage(missingFlag, true)
         assertEquals(AppInfo.State.UNFROZEN, AppManager.state(verified, HailData.MODE_SHIZUKU_DISABLE))
-        assertEquals(AppInfo.State.NOT_FOUND, AppManager.state(verified.copy(installed = false), HailData.MODE_SHIZUKU_DISABLE))
+        assertEquals(AppInfo.State.NOT_INSTALLED, AppManager.state(verified.copy(installed = false), HailData.MODE_SHIZUKU_DISABLE))
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { host ->
                 val adapter = PagerAdapter()

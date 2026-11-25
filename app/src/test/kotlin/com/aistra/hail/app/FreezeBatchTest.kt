@@ -33,6 +33,19 @@ class FreezeBatchTest {
         assertFalse(outcome.reachedTarget("denied"))
     }
 
+    @Test fun retainedPackageIsAlreadyInactiveOnlyForFreeze() {
+        for (freeze in listOf(true, false)) {
+            val result = FreezeBatch.run(listOf("retained", "unknown"), "hail", freeze, {
+                if (it == "retained") AppInfo.State.NOT_INSTALLED else AppInfo.State.NOT_FOUND
+            }) { error("An absent package cannot be mutated") }
+            assertEquals(setOf("retained"), result.notInstalled)
+            assertEquals(setOf("unknown"), result.missing)
+            assertEquals(freeze, result.reachedTarget("retained", freeze))
+            assertFalse(result.reachedTarget("unknown", freeze))
+            assertTrue(result.changed.isEmpty())
+        }
+    }
+
     @Test fun alreadyFrozenAndEmptySelectionsNeverTouchTheBackend() {
         for (names in listOf(emptyList(), listOf("app", "app", "hail"))) {
             val result = FreezeBatch.run(names, "hail", true, { AppInfo.State.FROZEN }) {

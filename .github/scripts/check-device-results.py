@@ -14,6 +14,7 @@ expected = {
     ("SystemAppsTest", "idleModeOpensAndroidSettingsForTheSelectedSystemApp"),
     ("SystemAppsTest", "disablesAndEnablesAPreinstalledAppWithShizukuPermission"),
     ("SystemAppsTest", "deniedSystemAppChangePreservesEnabledState"),
+    ("SystemAppsTest", "retriesOnlyUnappliedPackagesAfterAcknowledgedOrInterruptedBatch"),
     ("SystemAppsTest", "retainedSystemAppShowsProfileStatusAndCanBeRecheckedFromHome"),
     ("SystemAppsTest", "installedEvidenceAndRecycledHomeColorsAreIndependentOfRetainedFlags"),
 }
