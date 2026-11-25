@@ -77,7 +77,7 @@ object HShortcuts {
                     app.packageManager.defaultActivityIcon
                 ))).setShortLabel(
                     applicationInfo?.loadLabel(app.packageManager) ?: packageName
-                ).setIntent(HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, packageName)).build()
+                ).setIntent(HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, packageName).setClass(app, ApiActivity::class.java)).build()
         ShortcutManagerCompat.pushDynamicShortcut(app, shortcut)
         addDynamicShortcutAction(HailData.dynamicShortcutAction)
     }
@@ -109,7 +109,7 @@ object HShortcuts {
                     app, icon
                 )!!
             )
-        ).setShortLabel(app.getString(label)).setIntent(Intent(id)).build()
+        ).setShortLabel(app.getString(label)).setIntent(Intent(id).setClass(app, ApiActivity::class.java)).build()
         ShortcutManagerCompat.pushDynamicShortcut(app, shortcut)
     }
 

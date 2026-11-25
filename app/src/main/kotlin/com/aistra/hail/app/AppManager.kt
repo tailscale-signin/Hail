@@ -58,7 +58,7 @@ object AppManager {
         }
     }
 
-    suspend fun changeFrozen(packages: Collection<String>, frozen: Boolean): FreezeResult {
+    suspend fun changeFrozen(packages: Collection<String>, frozen: Boolean, includeLabel: Boolean = true): FreezeResult {
         val mode = HailData.workingMode
         return mutations.withLock {
             withContext(Dispatchers.IO) {
@@ -66,7 +66,7 @@ object AppManager {
                 val result = FreezeBatch.run(packages, BuildConfig.APPLICATION_ID, frozen,
                     state = { pkg ->
                         val info = HPackages.getApplicationInfoOrNull(pkg)
-                        if (info != null) infoByPackage[pkg] = info
+                        if (includeLabel && info != null) infoByPackage[pkg] = info
                         state(info, mode)
                     },
                     apply = { batch ->
@@ -113,17 +113,19 @@ object AppManager {
 
     suspend fun prepareLaunch(pkg: String): Intent? {
         val mode = HailData.workingMode
+        var thawed = false
         // Launching is the Android operation that clears a force-stop.
         if (!mode.endsWith(HailData.STOP)) {
-            val result = changeFrozen(listOf(pkg), false)
+            val result = changeFrozen(listOf(pkg), false, includeLabel = false)
             if (pkg in result.missing) return null
             if (pkg in result.failed) throw IllegalStateException(resultMessage(result, false))
+            thawed = pkg in result.changed
         }
         return withContext(Dispatchers.IO) {
             var intent = app.packageManager.getLaunchIntentForPackage(pkg)
-            if (intent == null && mode == HailData.MODE_ISLAND_HIDE) {
-                for (attempt in 1..5) {
-                    delay(100)
+            if (intent == null && (thawed || mode == HailData.MODE_ISLAND_HIDE)) {
+                for (waitMs in listOf(20L, 40L, 70L, 120L, 250L)) {
+                    delay(waitMs)
                     intent = app.packageManager.getLaunchIntentForPackage(pkg)
                     if (intent != null) break
                 }

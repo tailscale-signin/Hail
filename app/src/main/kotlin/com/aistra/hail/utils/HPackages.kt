@@ -86,18 +86,15 @@ object HPackages {
     }
 
     fun setAppDisabled(packageName: String, disabled: Boolean): Boolean {
-        getApplicationInfoOrNull(packageName) ?: return false
         if (disabled) forceStopApp(packageName)
-        runCatching {
-            val newState = when {
-                !disabled -> PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                else -> PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-            }
+        val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        return try {
             app.packageManager.setApplicationEnabledSetting(packageName, newState, 0)
-        }.onFailure {
-            HLog.e(it)
+            app.packageManager.getApplicationEnabledSetting(packageName) == newState
+        } catch (e: RuntimeException) {
+            HLog.e(e)
+            false
         }
-        return isAppDisabled(packageName) == disabled
     }
 
     @RequiresApi(Build.VERSION_CODES.P)

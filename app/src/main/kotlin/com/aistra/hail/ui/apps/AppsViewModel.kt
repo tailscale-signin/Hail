@@ -35,6 +35,12 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setChecked(pkg: String, checked: Boolean) {
+        displayApps.value = displayApps.value?.map { row ->
+            if (row.info.packageName == pkg) row.copy(checked = checked) else row
+        }
+    }
+
     fun updateAppList() {
         loadJob?.cancel()
         filterJob?.cancel()
@@ -50,7 +56,6 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
         val source = applications
         val search = query
         val pm = getApplication<HailApp>().packageManager
-        val checked = HailData.checkedList.mapTo(hashSetOf()) { it.packageName }
         val sort = HailData.sortBy
         val mode = HailData.workingMode
         val users = HailData.filterUserApps
@@ -60,7 +65,7 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
         val gray = HailData.grayscaleIcon
         val nineKey = HailData.nineKeySearch
         filterJob = viewModelScope.launch {
-            displayApps.value = withContext(Dispatchers.IO) {
+            val filtered = withContext(Dispatchers.IO) {
                 val rows = source.mapNotNull { info ->
                     ensureActive()
                     val pkg = info.packageName
@@ -77,7 +82,7 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
                         else -> null
                     }
                     InstalledRow(info, label, frozen, info.flags and ApplicationInfo.FLAG_INSTALLED != 0,
-                        pkg in checked, gray, timestamp ?: 0)
+                        false, gray, timestamp ?: 0)
                 }
                 when (sort) {
                     HailData.SORT_INSTALL -> rows.sortedBy { it.sortTime }
@@ -88,6 +93,8 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+            val checked = HailData.checkedList.mapTo(hashSetOf()) { it.packageName }
+            displayApps.value = filtered.map { if (it.info.packageName in checked) it.copy(checked = true) else it }
             isRefreshing.value = false
         }
     }

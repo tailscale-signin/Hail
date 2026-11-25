@@ -29,11 +29,12 @@ class HailApp : Application() {
     }
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val shortcutDispatcher = Dispatchers.IO.limitedParallelism(1)
     private var serviceUpdate: Job? = null
     private var lastServiceState: Pair<Boolean, Boolean>? = null
 
     fun recordLaunch(pkg: String) {
-        appScope.launch(Dispatchers.IO) {
+        appScope.launch(shortcutDispatcher) {
             runCatching { HShortcuts.addDynamicShortcut(pkg) }.onFailure { HLog.e(it) }
         }
         setAutoFreezeService()

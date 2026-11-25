@@ -83,7 +83,7 @@ class BackupViewModel : ViewModel() {
             val saved = preview.data.frozenStates
             if (preview.applyStates && saved.isNotEmpty()) {
                 val results = saved.entries.groupBy({ it.value }, { it.key }).map { (frozen, packages) ->
-                    AppManager.changeFrozen(packages, frozen)
+                    AppManager.changeFrozen(packages, frozen, includeLabel = false)
                 }
                 current.value = State.Restored(results.sumOf { it.changed.size }, results.sumOf { it.unchanged.size },
                     results.sumOf { it.missing.size }, results.sumOf { it.failed.size })

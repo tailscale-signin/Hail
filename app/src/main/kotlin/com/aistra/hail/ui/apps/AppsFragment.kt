@@ -111,7 +111,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     }
 
     override fun onItemClick(buttonView: CompoundButton) {
-//        buttonView.toggle()
+        buttonView.toggle()
     }
 
     override fun onCreateContextMenu(
@@ -188,7 +188,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
         if (isChecked) HailData.addCheckedApp(packageName)
         else HailData.removeCheckedApp(packageName)
         buttonView.isChecked = HailData.isChecked(packageName)
-        model.updateDisplayAppList()
+        model.setChecked(packageName, buttonView.isChecked)
     }
 
     override fun onCreateMenu(menu: Menu, inflater: MenuInflater) {

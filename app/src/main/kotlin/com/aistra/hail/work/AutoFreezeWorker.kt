@@ -25,7 +25,7 @@ class AutoFreezeWorker(context: Context, params: WorkerParameters) : CoroutineWo
             HailData.checkedList.filterNot { it.whitelisted || it.packageName == foreground || it.packageName in notifying }
                 .map { it.packageName }
         }
-        val result = AppManager.changeFrozen(packages, true)
+        val result = AppManager.changeFrozen(packages, true, includeLabel = false)
         app.setAutoFreezeService()
         if (result.failed.isEmpty()) Result.success() else Result.failure()
     }
