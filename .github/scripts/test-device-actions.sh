@@ -120,8 +120,9 @@ for server in shell root; do
         timeout 3m adb shell am instrument -w -r -e class com.aistra.hail.ui.apps.ReleaseSystemAppsTest \
             -e hailReleaseParity true -e server "$server" -e distribution "$distribution" \
             com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output"
+        adb logcat -d -s Hail:E HailParity:I | tail -n 90 > "$report/backend-$distribution-$server.log"
         grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
         grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"
+        grep 'HailParity.*Android verified' "$report/backend-$distribution-$server.log" | tail -n 1 >> "$report/parity.log"
     done
 done
-adb logcat -d -s HailParity:I > "$report/parity.log"

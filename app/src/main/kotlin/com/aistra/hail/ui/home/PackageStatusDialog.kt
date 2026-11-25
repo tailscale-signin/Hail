@@ -112,20 +112,21 @@ class PackageStatusDialog : DialogFragment() {
         alert.getButton(DialogInterface.BUTTON_POSITIVE).isVisible = record != null
         binding.removeFromHome.isVisible = enabled == null && HailData.isChecked(pkg)
         binding.removeFromHome.setOnClickListener { remove = true; dismiss() }
-        binding.fullDisable.isVisible = upgrade && pkg != requireContext().packageName
-        binding.fullDisable.isEnabled = true
-        binding.fullDisable.setOnClickListener { if (method != null) change(true, method) }
+        binding.enableInstead.isVisible = upgrade && pkg != requireContext().packageName
+        binding.enableInstead.isEnabled = true
+        binding.enableInstead.setOnClickListener { if (method != null) change(false, method) }
         binding.packageAction.apply {
             isVisible = enabled == null || (method != null && pkg != requireContext().packageName)
             isEnabled = true
             setText(when {
                 enabled == null -> R.string.check_again
+                upgrade -> R.string.apply_full_disable
                 method != mode -> if (enabled) R.string.disable_with_shizuku else R.string.enable_with_shizuku
                 enabled -> R.string.disable_app
                 else -> R.string.enable_app
             })
             setOnClickListener {
-                if (enabled != null && method != null) change(enabled, method)
+                if (enabled != null && method != null) change(enabled || upgrade, method)
                 else { isEnabled = false; message = null; refresh() }
             }
         }
@@ -133,7 +134,7 @@ class PackageStatusDialog : DialogFragment() {
 
     private fun change(disable: Boolean, mode: String) {
         binding.packageAction.isEnabled = false
-        binding.fullDisable.isEnabled = false
+        binding.enableInstead.isEnabled = false
         work = lifecycleScope.launch {
             val result = AppManager.changeFrozen(listOf(pkg), disable, mode = mode)
             message = if (result.reachedTarget(pkg)) null else AppManager.resultMessage(result, disable)

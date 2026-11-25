@@ -31,7 +31,7 @@ class ReleaseSystemAppsTest {
     private fun res(name: String) = By.res(target, name)
 
     private fun await(selector: BySelector) = requireNotNull(device.wait(Until.findObject(selector), 12_000)) {
-        "Missing $selector in ${device.currentPackageName}: " + device.findObjects(By.text(Pattern.compile(".+"))).take(24).map { it.text }
+        "Missing $selector in ${device.currentPackageName}: " + device.findObjects(By.text(Pattern.compile("(?s).+"))).take(24).map { it.text }
     }
 
     private fun menu(title: Int, id: String) {
