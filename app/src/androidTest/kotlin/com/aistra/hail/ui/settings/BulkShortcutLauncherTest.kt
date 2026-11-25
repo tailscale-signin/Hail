@@ -3,6 +3,7 @@ package com.aistra.hail.ui.settings
 import android.content.Intent
 import android.content.pm.ShortcutManager
 import android.os.SystemClock
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
@@ -34,6 +35,16 @@ class BulkShortcutLauncherTest {
         "Expected $selector in ${device.currentPackageName}. Visible labels: $labels"
     }
 
+    private fun openBulkPreference(title: BySelector) {
+        await(title)
+        device.waitForIdle()
+        val label = context.getString(R.string.add_all_app_shortcuts)
+        var node = instrumentation.uiAutomation.rootInActiveWindow
+            ?.findAccessibilityNodeInfosByText(label)?.firstOrNull { it.text?.contains(label) == true }
+        while (node != null && !node.isClickable) node = node.parent
+        if (node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) != true) await(title).click()
+    }
+
     @Test fun dismissRetryApproveAndRepeatFromSettings() {
         val packages = listOf("com.android.settings", context.packageName)
         val originals = HailData.checkedList.toList()
@@ -56,7 +67,7 @@ class BulkShortcutLauncherTest {
                     device.swipe(x, device.displayHeight * 3 / 4, x, device.displayHeight / 3, 30)
                     device.waitForIdle(1_000)
                 }
-                await(title).click()
+                openBulkPreference(title)
                 await(approve)
                 device.pressBack()
                 await(By.text(Pattern.compile(context.getString(R.string.shortcut_batch_retry), Pattern.CASE_INSENSITIVE))).click()
@@ -74,7 +85,7 @@ class BulkShortcutLauncherTest {
                 }
                 await(By.text(context.getString(R.string.shortcut_batch_result, 2, 0, 0)))
                 await(By.text(context.getString(android.R.string.ok))).click()
-                await(title).click()
+                openBulkPreference(title)
                 await(By.text(context.getString(R.string.shortcut_batch_result, 0, 2, 0)))
             } finally {
                 scenario.onActivity {

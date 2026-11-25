@@ -10,6 +10,9 @@ expected = {
     ("BackupSettingsTest", "invalidBackupsAndDeviceLocalSettings"),
     ("BackupSettingsTest", "settingsWritesFilePreviewsCancelsAndRestoresMultiTagBackup"),
     ("BulkShortcutLauncherTest", "dismissRetryApproveAndRepeatFromSettings"),
+    ("SystemAppsTest", "idleModeOpensAndroidSettingsForTheSelectedSystemApp"),
+    ("SystemAppsTest", "disablesAndEnablesAPreinstalledAppWithShizukuPermission"),
+    ("SystemAppsTest", "deniedSystemAppChangePreservesEnabledState"),
 }
 log = Path(sys.argv[1])
 bundle = {}

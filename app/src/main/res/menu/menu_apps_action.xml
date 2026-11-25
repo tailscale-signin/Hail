@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <item
+        android:id="@+id/action_system_enabled"
+        android:title="@string/disable_app"
+        android:visible="false" />
+    <item
         android:id="@+id/action_details"
         android:title="@string/action_details" />
     <item

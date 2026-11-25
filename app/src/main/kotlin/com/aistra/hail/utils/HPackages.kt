@@ -47,7 +47,20 @@ object HPackages {
         else app.packageManager.getApplicationInfo(packageName, flags)
     }.getOrNull()
 
-    fun isAppDisabled(packageName: String): Boolean = getApplicationInfoOrNull(packageName)?.enabled?.not() ?: false
+    fun isSystemApp(info: ApplicationInfo): Boolean =
+        info.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+
+    /** Read back the per-user override after a write, including when Android silently declined it. */
+    fun hasRequestedEnabledSetting(packageName: String, disabled: Boolean): Boolean = runCatching {
+        when (app.packageManager.getApplicationEnabledSetting(packageName)) {
+            PackageManager.COMPONENT_ENABLED_STATE_DEFAULT -> getApplicationInfoOrNull(packageName)?.enabled == !disabled
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> !disabled
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER,
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> disabled
+            else -> false
+        }
+    }.getOrDefault(false)
 
     private val privateFlags by lazy { runCatching { ApplicationInfo::class.java.getField("privateFlags") }.getOrNull() }
     fun isHidden(info: ApplicationInfo): Boolean = runCatching { (privateFlags?.getInt(info) ?: 0) and 1 != 0 }.getOrDefault(false)
@@ -89,11 +102,10 @@ object HPackages {
     }
 
     fun setAppDisabled(packageName: String, disabled: Boolean): Boolean {
-        if (disabled) forceStopApp(packageName)
-        val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        val newState = if (disabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER else PackageManager.COMPONENT_ENABLED_STATE_ENABLED
         return try {
             app.packageManager.setApplicationEnabledSetting(packageName, newState, 0)
-            app.packageManager.getApplicationEnabledSetting(packageName) == newState
+            hasRequestedEnabledSetting(packageName, disabled)
         } catch (e: RuntimeException) {
             HLog.e(e)
             false
