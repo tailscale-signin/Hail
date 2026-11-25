@@ -67,4 +67,5 @@ classes=com.aistra.hail.app.DeviceFreezeTest,com.aistra.hail.ui.settings.BackupS
 timeout 7m adb shell am instrument -w -r -e class "$classes" -e hailCiFixtures true \
     com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "$report/runner.txt"
 adb logcat -d -s HailTiming:I > "$report/timings.txt"
+adb logcat -d -s Hail:E HailSystemApp:I > "$report/system-app.log"
 python3 .github/scripts/check-device-results.py "$report/runner.txt"

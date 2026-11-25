@@ -27,6 +27,7 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import rikka.shizuku.Shizuku
+import java.util.regex.Pattern
 
 @RunWith(AndroidJUnit4::class)
 class SystemAppsTest {
@@ -44,7 +45,9 @@ class SystemAppsTest {
     }
 
     private fun await(selector: BySelector) = requireNotNull(device.wait(Until.findObject(selector), 12_000)) {
-        "Missing $selector in ${device.currentPackageName}"
+        val labels = device.findObjects(By.text(Pattern.compile(".+"))).take(20).map { it.text }
+        val actions = device.findObjects(By.desc(Pattern.compile(".+"))).take(12).map { it.contentDescription }
+        "Missing $selector in ${device.currentPackageName}. Labels $labels. Actions $actions"
     }
 
     private fun waitFor(message: String, predicate: () -> Boolean) {
@@ -55,24 +58,50 @@ class SystemAppsTest {
 
     private fun text(id: Int) = By.text(ctx.getString(id))
 
-    @Test fun opensAndroidSettingsAndTogglesAPreinstalledAppUsingShizuku() {
+    private fun openToolbarItem(id: String, title: Int) {
+        val description = ctx.getString(title)
+        val button = device.wait(Until.findObject(By.desc(description)), 2_000)
+            ?: device.findObject(By.res(ctx.packageName, id))
+        if (button != null) {
+            button.click()
+        } else {
+            await(By.desc(ctx.getString(androidx.appcompat.R.string.abc_action_menu_overflow_description))).click()
+            await(text(title)).click()
+        }
+    }
+
+    private fun withAppFilters(showSystem: Boolean, run: (ApplicationInfo) -> Unit) {
         val info = fixture()
-        val pkg = info.packageName
-        val oldSetting = pm.getApplicationEnabledSetting(pkg)
         val oldMode = prefs.getString(HailData.WORKING_MODE, null)
         val filterKeys = listOf(HailData.FILTER_SYSTEM_APPS, HailData.FILTER_USER_APPS,
             HailData.FILTER_FROZEN_APPS, HailData.FILTER_UNFROZEN_APPS)
         val oldFilters = prefs.all.filterKeys { it in filterKeys }
-        val wasChecked = HailData.isChecked(pkg)
         prefs.edit().putString(HailData.WORKING_MODE, HailData.MODE_DEFAULT)
-            .apply { filterKeys.forEach { remove(it) } }.commit()
+            .apply { filterKeys.forEach { remove(it) } }
+            .putBoolean(HailData.FILTER_SYSTEM_APPS, showSystem)
+            .putBoolean(HailData.FILTER_USER_APPS, !showSystem).commit()
         try {
+            run(info)
+        } finally {
+            prefs.edit().putString(HailData.WORKING_MODE, oldMode).apply {
+                filterKeys.forEach { key ->
+                    if (key in oldFilters) putBoolean(key, oldFilters[key] as Boolean) else remove(key)
+                }
+            }.commit()
+            device.pressHome()
+        }
+    }
+
+    @Test fun idleModeOpensAndroidSettingsForTheSelectedSystemApp() {
+        withAppFilters(false) { info ->
+            val pkg = info.packageName
+            val oldSetting = pm.getApplicationEnabledSetting(pkg)
             ActivityScenario.launch(MainActivity::class.java).use {
                 await(By.res(ctx.packageName, "nav_apps")).click()
-                await(By.res(ctx.packageName, "action_apps_filter")).click()
+                openToolbarItem("action_apps_filter", R.string.filter_by)
                 await(text(R.string.filter_system_apps)).click()
                 await(text(R.string.action_continue)).click()
-                await(By.res(ctx.packageName, "action_search")).click()
+                openToolbarItem("action_search", R.string.action_search)
                 await(By.clazz("android.widget.EditText")).text = pkg
                 await(By.res(ctx.packageName, "app_desc").text(pkg)).longClick()
                 await(text(R.string.disable_in_settings)).click()
@@ -81,17 +110,25 @@ class SystemAppsTest {
                 await(By.pkg(settingsPkg).text(info.loadLabel(pm).toString()))
                 assertEquals(oldSetting, pm.getApplicationEnabledSetting(pkg))
             }
+        }
+    }
+
+    @Test fun disablesAndEnablesAPreinstalledAppWithShizukuPermission() = withAppFilters(true) { info ->
+        val pkg = info.packageName
+        val oldSetting = pm.getApplicationEnabledSetting(pkg)
+        val wasChecked = HailData.isChecked(pkg)
+        try {
             ActivityScenario.launch(MainActivity::class.java).use {
                 await(By.res(ctx.packageName, "nav_settings")).click()
                 await(text(R.string.working_mode)).click()
                 await(text(R.string.mode_shizuku_disable)).click()
                 if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                    await(By.pkg("moe.shizuku.privileged.api").text("Allow all the time")).click()
+                    await(By.pkg("moe.shizuku.privileged.api").text(Pattern.compile("Allow all the time", Pattern.CASE_INSENSITIVE))).click()
                 }
                 waitFor("Hail saved the authorized Shizuku mode") { HailData.workingMode == HailData.MODE_SHIZUKU_DISABLE }
                 assertEquals(2000, Shizuku.getUid())
                 await(By.res(ctx.packageName, "nav_apps")).click()
-                await(By.res(ctx.packageName, "action_search")).click()
+                openToolbarItem("action_search", R.string.action_search)
                 await(By.clazz("android.widget.EditText")).text = pkg
                 val row = By.res(ctx.packageName, "app_desc").text(pkg)
                 await(row).longClick()
@@ -112,12 +149,6 @@ class SystemAppsTest {
             val reset = if (oldSetting == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) "default-state" else "enable"
             ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation
                 .executeShellCommand("pm $reset --user ${HPackages.myUserId} $pkg")).use { it.readBytes() }
-            prefs.edit().putString(HailData.WORKING_MODE, oldMode).apply {
-                filterKeys.forEach { key ->
-                    if (key in oldFilters) putBoolean(key, oldFilters[key] as Boolean) else remove(key)
-                }
-            }.commit()
-            device.pressHome()
         }
     }
 
