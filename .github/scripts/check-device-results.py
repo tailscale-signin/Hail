@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 expected = {
     ("DebugLogTest", "offByDefaultOrderedBoundedAndExportableAfterStopping"),
     ("DeviceFreezeTest", "freezeRepeatThenThawLaunchAndRestoreFromBackup"),
+    ("DeviceFreezeTest", "privateDefaultsAndBrandResourcesArePackaged"),
     ("DeviceFreezeTest", "readsAndroidSuspensionAndReportsDeniedOwnerMutation"),
     ("BackupSettingsTest", "existingSingleTagAndMultiTagListsSurviveUpgrade"),
     ("BackupSettingsTest", "invalidBackupsAndDeviceLocalSettings"),

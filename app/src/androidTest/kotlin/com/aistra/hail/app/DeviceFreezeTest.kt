@@ -60,7 +60,7 @@ class DeviceFreezeTest {
         val device = UiDevice.getInstance(instrumentation)
         val originalLibrary = withContext(Dispatchers.Main) { HailData.backupSnapshot() }
         val automation = instrumentation.uiAutomation
-        automation.adoptShellPermissionIdentity(Manifest.permission.CHANGE_COMPONENT_ENABLED_STATE, Manifest.permission.FORCE_STOP_PACKAGES)
+        automation.adoptShellPermissionIdentity(Manifest.permission.CHANGE_COMPONENT_ENABLED_STATE, "android.permission.FORCE_STOP_PACKAGES")
         try {
             prefs.edit().putString(HailData.WORKING_MODE, HailData.MODE_PRIVAPP_DISABLE).commit()
             ctx.startActivity(requireNotNull(ctx.packageManager.getLaunchIntentForPackage(packages.first())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
