@@ -37,11 +37,11 @@ adb shell -T 'run-as com.aistra.hail.debug sh -c "cat > files/v1/tags.json"' <<'
 [{"tag":"Default","id":0},{"tag":"Legacy","id":-91}]
 JSON
 install_fixture() {
-    local name="$1"
+    local name="$1" enabled="${2:-true}"
     cat > "$fixture_dir/AndroidManifest.xml" <<XML
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.aistra.hail.testfixture.$name" android:versionCode="1" android:versionName="1">
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="36" />
-    <application android:hasCode="false" android:label="Hail fixture $name">
+    <application android:hasCode="false" android:label="Hail fixture $name" android:enabled="$enabled">
         <activity android:name="android.app.Activity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -56,6 +56,7 @@ XML
     adb install --no-incremental --no-streaming -r "$fixture_dir/$name.apk"
 }
 for name in one two; do install_fixture "$name"; done
+install_fixture dormant false
 # Exercise the same shell-backed Shizuku release and consent screen used on an unrooted phone.
 shizuku_apk="$fixture_dir/shizuku.apk"
 curl --fail --location --silent --show-error --retry 3 -o "$shizuku_apk" \
@@ -124,6 +125,7 @@ echo "3be0c4a210b0472198ea3b675fcbd5720fa16288dcff119557644ea947003236  $upstrea
 "$sdk_tools/apksigner" verify "$upstream"
 release_dir=app/build/outputs/apk/release
 release_version=$(jq -er '.elements[0].versionName' "$release_dir/output-metadata.json")
+release_code=$(jq -er '.elements[0].versionCode' "$release_dir/output-metadata.json")
 release_apk="$release_dir/$(jq -r '.elements[0].outputFile' "$release_dir/output-metadata.json")"
 "$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture --out "$fixture_dir/fork.apk" "$release_apk"
 build_previous() {
@@ -151,7 +153,7 @@ for distribution in baseline current; do
     grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"
     pull_trace "benchmark-$distribution" "$report/benchmark-$distribution.jsonl"
 done
-python3 .github/scripts/check-bulk-performance.py "$report" | tee "$report/bulk-performance.txt"
+python3 .github/scripts/check-bulk-performance.py "$report" "$release_version" "$release_code" | tee "$report/bulk-performance.txt"
 
 for server in shell root; do
     uid=2000
@@ -184,13 +186,14 @@ for server in shell root; do
         output="$report/parity-$distribution-$server.txt"
         timeout 4m adb shell am instrument -w -r -e class 'com.aistra.hail.ui.apps.ReleaseSystemAppsTest#freezesAndThawsFromHome' \
             -e hailReleaseParity true -e server "$server" -e distribution "$distribution" \
+            -e releaseVersion "$release_version" -e releaseCode "$release_code" \
             com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output"
         adb logcat -d -s Hail:E HailParity:I | tail -n 90 > "$report/backend-$distribution-$server.log"
         grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
         grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"
         if [[ $distribution == fork ]]; then
             pull_trace "$server" "$report/decision-$server.jsonl"
-            python3 .github/scripts/check-decision-log.py "$report/decision-$server.jsonl" "$server" "$release_version"
+            python3 .github/scripts/check-decision-log.py "$report/decision-$server.jsonl" "$server" "$release_version" "$release_code"
         fi
         grep 'HailParity.*Android verified' "$report/backend-$distribution-$server.log" | tail -n 1 >> "$report/parity.log"
     done

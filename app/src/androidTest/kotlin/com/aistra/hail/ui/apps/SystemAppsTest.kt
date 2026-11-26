@@ -151,7 +151,7 @@ class SystemAppsTest {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 selectShizukuDisable()
                 val packageService = HShizuku.Packages()
-                assertTrue(packageService.installed().any { it.packageName == pkg })
+                assertTrue(packageService.applications().any { it.packageName == pkg })
                 assertEquals(true, packageService.find(pkg)?.installed)
                 runBlocking {
                     for (disable in listOf(true, false)) {
@@ -201,6 +201,36 @@ class SystemAppsTest {
             val reset = if (oldSetting == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) "default-state" else "enable"
             ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation
                 .executeShellCommand("pm $reset --user ${HPackages.myUserId} $pkg")).use { it.readBytes() }
+        }
+    }
+
+    @Test fun storesAnExplicitDisableForAManifestDisabledApp() = withAppFilters(true) {
+        val pkg = "com.aistra.hail.testfixture.dormant"
+        val info = requireNotNull(HPackages.getApplicationInfoOrNull(pkg, HPackages.INSTALLED_FOR_USER))
+        val saved = HailData.checkedList.toList()
+        assertFalse(info.enabled)
+        assertEquals(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, pm.getApplicationEnabledSetting(pkg))
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                selectShizukuDisable()
+                scenario.onActivity { HailData.checkedList.clear(); HailData.checkedList.add(AppInfo(pkg)) }
+                await(By.res(ctx.packageName, "nav_home")).click()
+                await(By.res(ctx.packageName, "app_name").textContains(info.loadLabel(pm).toString())).longClick()
+                await(text(R.string.package_status_controls)).click()
+                await(By.res(ctx.packageName, "report").textContains(ctx.getString(R.string.package_manifest_disabled)))
+                assertTrue(await(By.res(ctx.packageName, "enable_instead")).isEnabled)
+                await(text(R.string.apply_explicit_disable)).click()
+                waitFor("Android stored the explicit disable over the manifest default") {
+                    pm.getApplicationEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+                }
+                await(By.res(ctx.packageName, "package_action").text(ctx.getString(R.string.enable_app)).enabled(true)).click()
+                waitFor("Android enabled the manifest-disabled app") {
+                    pm.getApplicationEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                }
+            }
+        } finally {
+            shell("pm default-state --user ${HPackages.myUserId} $pkg")
+            instrumentation.runOnMainSync { HailData.checkedList.clear(); HailData.checkedList.addAll(saved) }
         }
     }
 
@@ -337,7 +367,10 @@ class SystemAppsTest {
                 assertTrue(shell("pm uninstall -k --user $user $pkg").contains("Success"))
                 assertFalse(listed())
                 assertTrue(listed(retained = true))
-                assertFalse(service.installed().any { it.packageName == pkg })
+                assertFalse(service.applications().any { it.packageName == pkg })
+                assertTrue(service.applications(includeRetained = true).any { it.packageName == pkg })
+                val lookup = PackageLookup(HailData.MODE_SHIZUKU_DISABLE)
+                assertEquals(false, lookup.all(includeRetainedSystem = true)[pkg]?.installed)
 
                 // DEFAULT can look enabled in metadata, but an explicit Enable must store setting 1.
                 shell("pm default-state --user $user $pkg")
@@ -379,6 +412,26 @@ class SystemAppsTest {
                     service.setting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                 }
                 assertFalse("Enabling an override must not reinstall the retained package", listed())
+                device.pressBack()
+
+                await(By.res(ctx.packageName, "nav_apps")).click()
+                await(searchForApp(scenario, pkg)).longClick()
+                await(text(R.string.package_status_controls)).click()
+                await(By.res(ctx.packageName, "report").textContains(ctx.getString(R.string.package_retained_here)))
+                await(text(R.string.disable_app)).click()
+                waitFor("Apps tab stored the disabled override") {
+                    service.setting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+                }
+                val unconfirmed = lookup.verifyRetainedEnabled(setOf(pkg, unknown.first()))
+                assertEquals(setOf(pkg, unknown.first()), unconfirmed.unconfirmed)
+                assertTrue(unconfirmed.retained.isEmpty())
+                assertFalse(listed())
+                await(text(R.string.enable_app)).click()
+                waitFor("Apps tab restored the enabled override") {
+                    service.setting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                }
+                assertEquals(setOf(pkg), lookup.verifyRetainedEnabled(setOf(pkg)).retained)
+                assertFalse(listed())
                 device.pressBack()
 
                 runBlocking {

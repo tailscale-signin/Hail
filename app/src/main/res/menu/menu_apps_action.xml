@@ -5,6 +5,10 @@
         android:title="@string/disable_app"
         android:visible="false" />
     <item
+        android:id="@+id/action_package_status"
+        android:title="@string/package_status_controls"
+        android:visible="false" />
+    <item
         android:id="@+id/action_details"
         android:title="@string/action_details" />
     <item

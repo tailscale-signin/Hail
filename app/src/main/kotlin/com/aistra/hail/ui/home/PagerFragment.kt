@@ -254,7 +254,9 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         val pkg = info.packageName
         val frozen = row.state == AppInfo.State.FROZEN
         val action = getString(if (frozen) R.string.action_unfreeze else R.string.action_freeze)
-        val showStatus = row.application?.let(HPackages::isSystemApp) ?: true
+        val showStatus = row.application?.let {
+            HPackages.isSystemApp(it) || (frozen && HailData.workingMode.endsWith(HailData.DISABLE))
+        } ?: true
         val entries = resources.getStringArray(R.array.home_action_entries).filter {
                 (it != getString(R.string.action_freeze) || !frozen) && (it != getString(R.string.action_unfreeze) || frozen) && (it != getString(
                     R.string.action_pin

@@ -35,15 +35,17 @@ class PackageStatusDialog : DialogFragment() {
         const val REMOVE = "remove"
         private const val PKG = "package"
         private const val MESSAGE = "message"
+        private const val SOURCE = "source"
 
-        fun show(manager: FragmentManager, pkg: String, message: String? = null) {
+        fun show(manager: FragmentManager, pkg: String, message: String? = null, source: String = "home_status") {
             if (!manager.isStateSaved && manager.findFragmentByTag(RESULT) == null) {
-                PackageStatusDialog().apply { arguments = bundleOf(PKG to pkg, MESSAGE to message) }.show(manager, RESULT)
+                PackageStatusDialog().apply { arguments = bundleOf(PKG to pkg, MESSAGE to message, SOURCE to source) }.show(manager, RESULT)
             }
         }
     }
 
     private val pkg get() = requireArguments().getString(PKG)!!
+    private val source get() = requireArguments().getString(SOURCE) ?: "home_status"
     private lateinit var binding: DialogPackageStatusBinding
     private var message: String? = null
     private var remove = false
@@ -83,7 +85,7 @@ class PackageStatusDialog : DialogFragment() {
 
     private suspend fun render() {
         val mode = HailData.workingMode
-        val trace = DecisionLog.begin("home_status", "inspect", mode, pkg)
+        val trace = DecisionLog.begin(source, "inspect", mode, pkg)
         val shizukuUid = if (mode.endsWith(HailData.DISABLE) && mode != HailData.MODE_SHIZUKU_DISABLE) null else
             withContext(Dispatchers.IO) { if (HShizuku.isAuthorized(trace)) runCatching { Shizuku.getUid() }.getOrNull() else null }
         val method = when {
@@ -102,6 +104,7 @@ class PackageStatusDialog : DialogFragment() {
             storedSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
         val upgrade = enabled == false && setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER &&
             withContext(Dispatchers.IO) { lookup.disableSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED }
+        val manifestDisabled = enabled == false && setting == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
         trace?.event("status_controls", pkg, "workingMode" to mode, "effectiveMode" to method, "serviceUid" to shizukuUid,
             "installed" to record?.installed, "enabled" to enabled, "observedSetting" to setting, "offerFullDisable" to upgrade,
             "offerStoredSetting" to canChangeStoredSetting)
@@ -112,11 +115,15 @@ class PackageStatusDialog : DialogFragment() {
         val status = when (enabled) {
             true -> if (setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
                 R.string.package_until_used else R.string.package_enabled
-            false -> if (upgrade) R.string.package_disabled_user else R.string.package_disabled
+            false -> when {
+                manifestDisabled -> R.string.package_manifest_disabled
+                upgrade -> R.string.package_disabled_user
+                else -> R.string.package_disabled
+            }
             null -> if (record == null) R.string.package_unknown_here else R.string.package_retained_here
         }
         val stopConfirmed = record?.info?.let { !it.enabled && it.flags and android.content.pm.ApplicationInfo.FLAG_STOPPED != 0 } == true
-        val checkStop = method != null && enabled == false && !upgrade && !stopConfirmed
+        val checkStop = method != null && enabled == false && !upgrade && !manifestDisabled && !stopConfirmed
         val storedStatus = when (storedSetting) {
             PackageManager.COMPONENT_ENABLED_STATE_DEFAULT -> R.string.package_retained_setting_default
             PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> R.string.package_retained_setting_enabled
@@ -127,6 +134,9 @@ class PackageStatusDialog : DialogFragment() {
         }
         binding.report.text = listOfNotNull(pkg, getString(R.string.package_user_mode, HPackages.myUserId, modeName),
             shizukuUid?.let { getString(if (it == 0) R.string.package_shizuku_root else R.string.package_shizuku_uid, it) },
+            if (mode == HailData.MODE_SHIZUKU_DISABLE && shizukuUid == null)
+                getString(if (runCatching { Shizuku.pingBinder() }.getOrDefault(false)) R.string.authorize_shizuku else R.string.start_shizuku)
+            else null,
             getString(status),
             storedStatus?.let { getString(it) },
             if (canChangeStoredSetting) getString(R.string.package_retained_setting_guidance) else null,
@@ -138,7 +148,7 @@ class PackageStatusDialog : DialogFragment() {
         alert.getButton(DialogInterface.BUTTON_POSITIVE).isVisible = record != null
         binding.removeFromHome.isVisible = enabled == null && HailData.isChecked(pkg)
         binding.removeFromHome.setOnClickListener { remove = true; dismiss() }
-        binding.enableInstead.isVisible = (upgrade || checkStop) && pkg != requireContext().packageName
+        binding.enableInstead.isVisible = method != null && (manifestDisabled || upgrade || checkStop) && pkg != requireContext().packageName
         binding.enableInstead.isEnabled = true
         binding.enableInstead.setOnClickListener { if (method != null) change(false, method) }
         binding.packageAction.apply {
@@ -146,6 +156,7 @@ class PackageStatusDialog : DialogFragment() {
             isEnabled = true
             setText(when {
                 canChangeStoredSetting -> if (storedDisabled) R.string.enable_app else R.string.disable_app
+                manifestDisabled -> R.string.apply_explicit_disable
                 checkStop -> R.string.verify_stop
                 enabled == null -> R.string.check_again
                 upgrade -> R.string.apply_full_disable
@@ -154,8 +165,8 @@ class PackageStatusDialog : DialogFragment() {
                 else -> R.string.enable_app
             })
             setOnClickListener {
-                if (canChangeStoredSetting && method != null) change(!storedDisabled, method)
-                else if (enabled != null && method != null) change(enabled || upgrade || checkStop, method)
+                if (canChangeStoredSetting) change(!storedDisabled, method)
+                else if (enabled != null && method != null) change(enabled || manifestDisabled || upgrade || checkStop, method)
                 else { isEnabled = false; message = null; refresh() }
             }
         }
@@ -165,7 +176,7 @@ class PackageStatusDialog : DialogFragment() {
         binding.packageAction.isEnabled = false
         binding.enableInstead.isEnabled = false
         work = lifecycleScope.launch {
-            val result = AppManager.changeFrozen(listOf(pkg), disable, mode = mode, source = "home_status")
+            val result = AppManager.changeFrozen(listOf(pkg), disable, mode = mode, source = source)
             message = if (result.reachedTarget(pkg, disable)) null else AppManager.resultMessage(result, disable)
             render()
         }

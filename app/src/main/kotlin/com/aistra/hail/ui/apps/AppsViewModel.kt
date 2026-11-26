@@ -56,7 +56,7 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
         loadJob = viewModelScope.launch {
             val pm = getApplication<HailApp>().packageManager
             applications = withContext(Dispatchers.IO) {
-                PackageLookup(HailData.workingMode).all().values.mapNotNull { record ->
+                PackageLookup(HailData.workingMode).all(includeRetainedSystem = true).values.mapNotNull { record ->
                     record.info?.let { Entry(record, it, pm) }
                 }
             }
