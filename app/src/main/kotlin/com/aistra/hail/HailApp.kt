@@ -27,7 +27,16 @@ class HailApp : Application() {
         super.onCreate()
         app = this
         // DirtyDataUpdater.update(app)
-        if (!HTarget.S) setAppTheme(HailData.appTheme)
+        setAppTheme(HailData.appTheme)
+        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
+        if (!prefs.getBoolean("recent_shortcuts_migrated", false)) {
+            appScope.launch(shortcutDispatcher) {
+                runCatching {
+                    if (!HailData.recentShortcuts) HShortcuts.removeRecentApps()
+                    prefs.edit().putBoolean("recent_shortcuts_migrated", true).apply()
+                }.onFailure(HLog::e)
+            }
+        }
         if (HailData.workingMode.startsWith(HailData.DHIZUKU)) HDhizuku.init()
     }
 
@@ -50,8 +59,12 @@ class HailApp : Application() {
         }
     }
 
+    fun clearRecentShortcuts() {
+        appScope.launch(shortcutDispatcher) { runCatching(HShortcuts::removeRecentApps).onFailure(HLog::e) }
+    }
+
     fun recordLaunch(pkg: String) {
-        appScope.launch(shortcutDispatcher) {
+        if (HailData.recentShortcuts && !HailData.biometricLogin) appScope.launch(shortcutDispatcher) {
             runCatching { HShortcuts.addDynamicShortcut(pkg) }.onFailure { HLog.e(it) }
         }
         setAutoFreezeService()
@@ -68,7 +81,8 @@ class HailApp : Application() {
                 val mode = HailData.workingMode
                 val start = candidates.isNotEmpty() && withContext(Dispatchers.IO) {
                     candidates.any { pkg -> HPackages.getApplicationInfoOrNull(pkg)?.let {
-                        !AppManager.isAppFrozen(it, mode)
+                        (mode.endsWith(HailData.DISABLE) && it.flags and android.content.pm.ApplicationInfo.FLAG_STOPPED == 0) ||
+                            !AppManager.isAppFrozen(it, mode)
                     } == true }
                 }
                 val desired = start to (start && whitelisted)

@@ -34,7 +34,7 @@ import com.aistra.hail.ui.main.MainFragment
 import com.aistra.hail.ui.theme.AppTheme
 import com.aistra.hail.utils.HPackages
 import com.aistra.hail.utils.HUI
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.aistra.hail.ui.PrivateDialogBuilder
 import com.google.android.material.imageview.ShapeableImageView
 import java.text.SimpleDateFormat
 
@@ -174,7 +174,7 @@ class AboutFragment : MainFragment() {
         confirmButton = { TextButton(onClick = onDismiss) { Text(text = stringResource(android.R.string.ok)) } })
 
     private fun openDonateDialog() {
-        MaterialAlertDialogBuilder(activity).setTitle(R.string.title_donate)
+        PrivateDialogBuilder(activity).setTitle(R.string.title_donate)
             .setSingleChoiceItems(R.array.donate_payment_entries, 0) { dialog, which ->
                 dialog.dismiss()
                 when (which) {
@@ -182,7 +182,7 @@ class AboutFragment : MainFragment() {
                         HUI.openLink(HailData.URL_ALIPAY)
                     }
 
-                    1 -> MaterialAlertDialogBuilder(activity).setTitle(R.string.title_donate)
+                    1 -> PrivateDialogBuilder(activity).setTitle(R.string.title_donate)
                         .setView(ShapeableImageView(activity).apply {
                             val padding = resources.getDimensionPixelOffset(R.dimen.padding_large)
                             setPadding(0, padding, 0, padding)

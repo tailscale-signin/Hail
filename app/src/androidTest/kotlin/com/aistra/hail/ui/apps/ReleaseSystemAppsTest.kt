@@ -66,7 +66,7 @@ class ReleaseSystemAppsTest {
         await(text(R.string.mode_shizuku_disable)).click()
         device.wait(Until.findObject(By.pkg("moe.shizuku.privileged.api")
             .text(Pattern.compile("Allow all the time", Pattern.CASE_INSENSITIVE))), 4_000)?.click()
-        await(text(R.string.mode_shizuku_disable))
+        await(By.textStartsWith(context.getString(R.string.mode_shizuku_disable)))
         await(res("nav_apps")).click()
         if (systemApps) {
             menu(R.string.filter_by, "action_apps_filter")

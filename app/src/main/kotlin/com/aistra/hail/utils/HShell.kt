@@ -4,10 +4,8 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 
 object HShell {
-    private fun getCurrentUserId(): Int = execSU("am get-current-user").second?.trim()?.toIntOrNull() ?: 0
-
     private val userArg: String
-        get() = "--user ${getCurrentUserId()}"
+        get() = "--user ${HPackages.myUserId}"
 
     fun execute(command: String, root: Boolean): Pair<Int, String?> = runCatching {
         ProcessBuilder(if (root) "su" else "sh").redirectErrorStream(true).start().run {
@@ -57,9 +55,17 @@ object HShell {
         trace?.event("android_call", packageName, "method" to "root pm $change", "user" to user)
         val (code, output) = execSU("pm $change --user $user $pkg && pm list packages $filter --user $user $pkg")
         if (code != 0) throw IllegalStateException(output?.trim()?.takeIf { it.isNotEmpty() } ?: "pm ($code)")
-        val verified = output?.lineSequence()?.any { it.trim() == "package:$packageName" } == true
+        val lines = output.orEmpty().lineSequence().map(String::trim).toList()
+        val observed = HPackages.currentEnabledSetting(packageName)
+        val target = if (disabled) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+            else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        val exact = if (observed != null) observed == target else {
+            val state = if (disabled) "disabled" else "enabled"
+            "Package $packageName new state: $state" in lines
+        }
+        val verified = exact && "package:$packageName" in lines
         trace?.event("readback", packageName, "reader" to "root pm list packages $filter", "exitCode" to code,
-            "settingReader" to "local PackageManager", "observedSetting" to HPackages.currentEnabledSetting(packageName), "verified" to verified)
+            "settingReader" to "local PackageManager", "observedSetting" to observed, "verified" to verified)
         return verified
     }
 

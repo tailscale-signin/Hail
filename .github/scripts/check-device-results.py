@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 expected = {
     ("DebugLogTest", "offByDefaultOrderedBoundedAndExportableAfterStopping"),
     ("DeviceFreezeTest", "freezeRepeatThenThawLaunchAndRestoreFromBackup"),
+    ("DeviceFreezeTest", "privateDefaultsAndBrandResourcesArePackaged"),
     ("DeviceFreezeTest", "readsAndroidSuspensionAndReportsDeniedOwnerMutation"),
     ("BackupSettingsTest", "existingSingleTagAndMultiTagListsSurviveUpgrade"),
     ("BackupSettingsTest", "invalidBackupsAndDeviceLocalSettings"),
@@ -16,6 +17,8 @@ expected = {
     ("SystemAppsTest", "deniedSystemAppChangePreservesEnabledState"),
     ("SystemAppsTest", "retriesOnlyUnappliedPackagesAfterAcknowledgedOrInterruptedBatch"),
     ("SystemAppsTest", "retainedSystemAppShowsProfileStatusAndCanBeRecheckedFromHome"),
+    ("SystemAppsTest", "retainedSystemAppCanStoreShizukuOverrideWithoutReinstalling"),
+    ("SystemAppsTest", "installedDisableVerificationDoesNotRequireRedundantInstalledFlag"),
     ("SystemAppsTest", "installedEvidenceAndRecycledHomeColorsAreIndependentOfRetainedFlags"),
 }
 log = Path(sys.argv[1])

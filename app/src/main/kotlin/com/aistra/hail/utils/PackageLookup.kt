@@ -1,5 +1,6 @@
 package com.aistra.hail.utils
 
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import com.aistra.hail.app.HailData
 import com.aistra.hail.utils.HPackages.UserPackage
@@ -57,9 +58,72 @@ class PackageLookup(private val mode: String, private val trace: DecisionTrace? 
         if (record == null || (!record.installed && serviceInventory == null && root == null)) return find(pkg)
         trace?.event("lookup", pkg, "reader" to "current-user batch inventory", "installed" to record.installed)
         val service = shizuku
-        if (!forChange || !record.installed || service == null) return record
+        if (!forChange || service == null) return record
+        if (!record.installed) return find(pkg) ?: record
         val setting = runCatching { service.setting(pkg) }.onFailure { trace?.error("binder_setting_failed", pkg, it) }.getOrNull()
         return record.copy(enabledSetting = setting)
+    }
+
+    data class StopChecks(val repaired: Set<String> = emptySet(), val unconfirmed: Set<String> = emptySet(),
+                          val retained: Set<String> = emptySet())
+
+    /** Read fresh flags after the write, including when an earlier request already disabled the app. */
+    fun verifyDisabled(packages: Set<String>, retainedSettings: Set<String> = emptySet()): StopChecks {
+        if (packages.isEmpty()) return StopChecks()
+        val service = shizuku
+        val snapshot = if (packages.size < 8) null else runCatching {
+            (service?.installed() ?: HPackages.getInstalledApplications(HPackages.INSTALLED_FOR_USER))
+                .associateBy { it.packageName }
+        }.onFailure { trace?.error("stop_inventory_failed", null, it) }.getOrNull()
+
+        fun read(pkg: String): ApplicationInfo? = runCatching {
+            service?.application(pkg)
+        }.onFailure { trace?.error("stop_lookup_failed", pkg, it) }.getOrNull()
+            ?: HPackages.getApplicationInfoOrNull(pkg, HPackages.INSTALLED_FOR_USER)
+
+        val repaired = mutableSetOf<String>()
+        val unconfirmed = mutableSetOf<String>()
+        val confirmedRetained = mutableSetOf<String>()
+        for (pkg in packages) {
+            val retained = if (pkg in retainedSettings) runCatching { service?.find(pkg) }
+                .onFailure { trace?.error("retained_readback_failed", pkg, it) }.getOrNull() else null
+            if (pkg in retainedSettings && retained?.installed != true) {
+                val confirmed = retained != null && (retained.enabledSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
+                    retained.enabledSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER)
+                trace?.event("retained_setting_readback", pkg, "installed" to retained?.installed,
+                    "observedSetting" to retained?.enabledSetting, "verified" to confirmed)
+                // There is no installed app to stop. Never reinstall it to satisfy a stopped-flag check.
+                if (confirmed) confirmedRetained.add(pkg) else unconfirmed.add(pkg)
+                continue
+            }
+            val observed = disableObservation(retained?.info ?: snapshot?.get(pkg) ?: read(pkg))
+            val verified = observed.confirmStopped(
+                stop = {
+                    val accepted = when (mode) {
+                        HailData.MODE_SHIZUKU_DISABLE -> service != null && HShizuku.forceStopApp(pkg, trace)
+                        HailData.MODE_SU_DISABLE -> HShell.forceStopApp(pkg, trace)
+                        else -> HPackages.forceStopApp(pkg, trace)
+                    }
+                    trace?.event("force_stop", pkg, "succeeded" to accepted)
+                },
+                observe = { disableObservation(read(pkg)) }
+            )
+            if (observed == DisableObservation.STOPPED) {
+                trace?.event("force_stop_skipped", pkg, "reason" to "Android already reports the package stopped")
+            }
+            trace?.event("disable_privacy", pkg, "disabledAndStopped" to verified)
+            if (!verified) unconfirmed.add(pkg)
+            else if (observed == DisableObservation.DISABLED) repaired.add(pkg)
+        }
+        return StopChecks(repaired, unconfirmed, confirmedRetained)
+    }
+
+    internal fun disableObservation(info: ApplicationInfo?) = when {
+        // These records come from installed-only queries. Some OEMs omit FLAG_INSTALLED;
+        // the query's authoritative user scope must not be contradicted by that metadata bit.
+        info == null || info.enabled -> DisableObservation.UNKNOWN
+        info.flags and ApplicationInfo.FLAG_STOPPED != 0 -> DisableObservation.STOPPED
+        else -> DisableObservation.DISABLED
     }
 
     private fun rootRecord(pkg: String, local: UserPackage?, enabled: Boolean): UserPackage {

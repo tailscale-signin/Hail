@@ -1,11 +1,20 @@
 name: Android CI
 
 on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish a signed fork release after verification (main only)
+        type: boolean
+        required: true
+        default: false
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches:
       - main
+      - feat/private-freeze-performance
     paths-ignore:
       - '**.md'
       - 'fastlane/**'
@@ -18,6 +27,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: hail-${{ github.ref == 'refs/heads/main' && 'main' || format('branch-{0}', github.head_ref || github.ref_name) }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   verify:
@@ -67,6 +80,178 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
+  publish:
+    needs: verify
+    if: >-
+      needs.verify.result == 'success' &&
+      github.repository == 'tailscale-signin/Hail' &&
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.publish_release == true) ||
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[release]')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      EXPECTED_SIGNER_SHA256: 7a540f2191e3ab467986e728bb280323a1e549ec55f163dd6b81259572fc310e
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platforms;android-37.2 build-tools;36.0.0'
+      - name: Require the existing fork signing secrets
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_ALIAS_PASSWORD: ${{ secrets.KEYSTORE_ALIAS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE KEYSTORE_PASSWORD KEYSTORE_ALIAS KEYSTORE_ALIAS_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing $name. Configure the existing fork signing key before publishing. No release was created."
+              exit 1
+            fi
+          done
+      - name: Build the official version from the validated commit
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          ./gradlew -PofficialRelease=true :app:assembleRelease
+      - name: Sign and verify the APK
+        id: signed
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_ALIAS_PASSWORD: ${{ secrets.KEYSTORE_ALIAS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          metadata=app/build/outputs/apk/release/output-metadata.json
+          version=$(jq -er '.elements[0].versionName' "$metadata")
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '::error::An official version without a commit suffix is required.'; exit 1; }
+          test -f "release-notes/$version.md"
+          release_dir=$(mktemp -d "$RUNNER_TEMP/hail-release.XXXXXX")
+          export HAIL_RELEASE_DIR="$release_dir"
+          export HAIL_KEYSTORE_FILE="$release_dir/signing.p12"
+          trap 'rm -f "$HAIL_KEYSTORE_FILE"' EXIT
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          encoded = ''.join(os.environ['KEYSTORE'].split())
+          Path(os.environ['HAIL_KEYSTORE_FILE']).write_bytes(base64.b64decode(encoded, validate=True))
+          PY
+          sdk_tools="$ANDROID_HOME/build-tools/36.0.0"
+          filename="Hail-v$version.apk"
+          apk="$release_dir/$filename"
+          unsigned_apk="app/build/outputs/apk/release/$(jq -er '.elements[0].outputFile' "$metadata")"
+          "$sdk_tools/apksigner" sign --ks "$HAIL_KEYSTORE_FILE" --ks-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias "$KEYSTORE_ALIAS" --key-pass env:KEYSTORE_ALIAS_PASSWORD --out "$apk" "$unsigned_apk"
+          "$sdk_tools/apksigner" verify --verbose --print-certs "$apk" > "$release_dir/certificate.txt"
+          "$sdk_tools/aapt2" dump badging "$apk" > "$release_dir/badging.txt"
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          folder = Path(os.environ['HAIL_RELEASE_DIR'])
+          config = Path('app/build.gradle.kts').read_text()
+          version = re.search(r'versionName\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', config).group(1)
+          code = int(re.search(r'versionCode\s*=\s*(\d+)', config).group(1))
+          metadata = json.loads(Path('app/build/outputs/apk/release/output-metadata.json').read_text())
+          assert metadata['applicationId'] == 'com.aistra.hail'
+          assert len(metadata['elements']) == 1
+          assert metadata['elements'][0]['versionName'] == version
+          assert metadata['elements'][0]['versionCode'] == code
+          line = folder.joinpath('badging.txt').read_text().splitlines()[0]
+          values = dict(re.findall(r"(\w+)='([^']*)'", line))
+          assert values['name'] == 'com.aistra.hail'
+          assert values['versionName'] == version and int(values['versionCode']) == code
+          fingerprints = re.findall(r'Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)', folder.joinpath('certificate.txt').read_text())
+          assert [value.lower() for value in fingerprints] == [os.environ['EXPECTED_SIGNER_SHA256']], 'APK signing certificate differs from the existing fork'
+          print(f'Confirmed com.aistra.hail {version} (code {code}) and the existing fork certificate.')
+          PY
+          (cd "$release_dir" && sha256sum "$filename" > "$filename.sha256")
+          printf 'directory=%s\nversion=%s\n' "$release_dir" "$version" >> "$GITHUB_OUTPUT"
+      - name: Upload and verify the draft before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DIR: ${{ steps.signed.outputs.directory }}
+          RELEASE_VERSION: ${{ steps.signed.outputs.version }}
+        run: |
+          set -euo pipefail
+          version="$RELEASE_VERSION"
+          tag="v$version"
+          filename="Hail-v$version.apk"
+          apk="$RELEASE_DIR/$filename"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" = "$GITHUB_SHA"
+          # Authenticated lists include drafts; authentication and network failures are fatal.
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RELEASE_DIR/existing-releases.json"
+          if ! jq -e --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | length == 0' \
+            "$RELEASE_DIR/existing-releases.json" >/dev/null; then
+            echo "::error::Release $tag already exists. Inspect it before retrying; drafts and assets are never replaced."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag already exists. Publication will not reuse or replace it."
+            exit 1
+          else
+            test "$?" -eq 2
+          fi
+          gh release create "$tag" "$apk" "$apk.sha256" --repo "$GITHUB_REPOSITORY" \
+            --draft --target "$GITHUB_SHA" --title "Hail $version" --notes-file "release-notes/$version.md"
+          # The by-tag REST endpoint cannot resolve an unpublished draft; use its numeric ID.
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RELEASE_DIR/created-releases.json"
+          release_id=$(jq -er --arg tag "$tag" \
+            '[.[][] | select(.tag_name == $tag)] | if length == 1 then .[0].id else error("Expected exactly one release") end' \
+            "$RELEASE_DIR/created-releases.json")
+          [[ "$release_id" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > "$RELEASE_DIR/draft.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          folder = Path(os.environ['RELEASE_DIR'])
+          release = json.loads(folder.joinpath('draft.json').read_text())
+          assert release['draft'] is True
+          assert release['tag_name'] == 'v' + os.environ['RELEASE_VERSION']
+          assert release['target_commitish'] == os.environ['GITHUB_SHA']
+          apk = folder / ('Hail-v' + os.environ['RELEASE_VERSION'] + '.apk')
+          expected = {path.name: path.stat().st_size for path in (apk, Path(str(apk) + '.sha256'))}
+          assert len(release['assets']) == len(expected)
+          assert {item['name']: item['size'] for item in release['assets'] if item['state'] == 'uploaded'} == expected
+          PY
+          downloaded=$(mktemp -d "$RUNNER_TEMP/hail-upload-check.XXXXXX")
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$downloaded" \
+            --pattern "$filename" --pattern "$filename.sha256"
+          (cd "$downloaded" && sha256sum --check "$filename.sha256")
+          cmp "$apk" "$downloaded/$filename"
+          cmp "$apk.sha256" "$downloaded/$filename.sha256"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" = "$GITHUB_SHA"
+          # A draft may have created its tag already. An existing tag must resolve to this commit.
+          if tag_refs=$(git ls-remote --exit-code --tags origin "refs/tags/$tag" "refs/tags/$tag^{}"); then
+            tag_sha=$(printf '%s\n' "$tag_refs" | awk '$2 ~ /\^\{\}$/ {print $1}')
+            if [[ -z "$tag_sha" ]]; then tag_sha=$(printf '%s\n' "$tag_refs" | awk 'NR == 1 {print $1}'); fi
+            test "$tag_sha" = "$GITHUB_SHA"
+          else
+            test "$?" -eq 2
+          fi
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false -f make_latest=true > "$RELEASE_DIR/published.json"
+          git fetch --no-tags origin "refs/tags/$tag"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$GITHUB_SHA"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          release = json.loads(Path(os.environ['RELEASE_DIR'], 'published.json').read_text())
+          assert release['draft'] is False and release['target_commitish'] == os.environ['GITHUB_SHA']
+          print(release['html_url'])
+          PY
+
   build:
     runs-on: ubuntu-latest
     needs: verify
@@ -83,13 +268,28 @@ jobs:
         with:
           packages: 'platforms;android-37.2 build-tools;36.0.0'
       - name: Build with Gradle
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_ALIAS_PASSWORD: ${{ secrets.KEYSTORE_ALIAS_PASSWORD }}
         run: |
-          touch signing.properties
-          echo storeFile=../keystore.jks >> signing.properties
-          echo storePassword=${{ secrets.KEYSTORE_PASSWORD }} >> signing.properties
-          echo keyAlias=${{ secrets.KEYSTORE_ALIAS }} >> signing.properties
-          echo keyPassword=${{ secrets.KEYSTORE_ALIAS_PASSWORD }} >> signing.properties
-          echo ${{ secrets.KEYSTORE }} | base64 --decode > keystore.jks
+          set -euo pipefail
+          umask 077
+          trap 'rm -f signing.properties keystore.jks' EXIT
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          names = ('KEYSTORE', 'KEYSTORE_PASSWORD', 'KEYSTORE_ALIAS', 'KEYSTORE_ALIAS_PASSWORD')
+          if any(not os.environ.get(name) for name in names):
+              raise SystemExit('Required upstream signing secrets are missing')
+          Path('keystore.jks').write_bytes(base64.b64decode(''.join(os.environ['KEYSTORE'].split()), validate=True))
+          def escape(value):
+              return ''.join({'\\': '\\\\', '\n': '\\n', '\r': '\\r', '\t': '\\t', ' ': '\\ ', '=': '\\=', ':': '\\:'}.get(char, char) for char in value)
+          values = {'storeFile': '../keystore.jks', 'storePassword': os.environ['KEYSTORE_PASSWORD'],
+                    'keyAlias': os.environ['KEYSTORE_ALIAS'], 'keyPassword': os.environ['KEYSTORE_ALIAS_PASSWORD']}
+          Path('signing.properties').write_text(''.join(f'{key}={escape(value)}\n' for key, value in values.items()))
+          PY
           ./gradlew assembleRelease
           echo "filename=$(jq -r '.elements.[0].outputFile' app/build/outputs/apk/release/output-metadata.json)" >> $GITHUB_ENV
       - name: Upload a Build Artifact

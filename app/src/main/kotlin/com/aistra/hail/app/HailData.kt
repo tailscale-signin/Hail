@@ -89,6 +89,7 @@ object HailData {
         MODE_PRIVAPP_STOP,
         MODE_PRIVAPP_DISABLE
     )
+    const val RECENT_SHORTCUTS = "recent_app_shortcuts"
     const val BIOMETRIC_LOGIN = "biometric_login"
     const val APP_THEME = "app_theme"
     const val FOLLOW_SYSTEM = "follow_system"
@@ -140,8 +141,9 @@ object HailData {
     val filterFrozenApps get() = sp.getBoolean(FILTER_FROZEN_APPS, true)
     val filterUnfrozenApps get() = sp.getBoolean(FILTER_UNFROZEN_APPS, true)
     val workingMode get() = sp.getString(WORKING_MODE, MODE_DEFAULT)!!
+    val recentShortcuts get() = sp.getBoolean(RECENT_SHORTCUTS, false)
     val biometricLogin get() = sp.getBoolean(BIOMETRIC_LOGIN, false)
-    val appTheme get() = sp.getString(APP_THEME, FOLLOW_SYSTEM)!!
+    val appTheme get() = sp.getString(APP_THEME, THEME_DARK)!!
     val iconPack get() = sp.getString(ICON_PACK, ACTION_NONE)!!
     val grayscaleIcon get() = sp.getBoolean(GRAYSCALE_ICON, true)
     val compactIcon get() = sp.getBoolean(COMPACT_ICON, false)

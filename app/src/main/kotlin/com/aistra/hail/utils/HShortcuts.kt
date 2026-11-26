@@ -15,9 +15,13 @@ import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.HailApi
 import com.aistra.hail.app.HailData
 import com.aistra.hail.ui.api.ApiActivity
+import com.aistra.hail.ui.api.InternalActionActivity
 import me.zhanghai.android.appiconloader.AppIconLoader
 
 object HShortcuts {
+    // Legacy pin broadcasts launch as the home app and use the public confirmation screen.
+    private val shortcutActivity get() = if (HTarget.O) InternalActionActivity::class.java else ApiActivity::class.java
+
     private val iconLoader by lazy {
         AppIconLoader(
             app.resources.getDimensionPixelSize(R.dimen.app_icon_size),
@@ -48,7 +52,7 @@ object HShortcuts {
 
     private fun buildPinShortcut(icon: IconCompat, id: String, label: CharSequence, intent: Intent) =
         ShortcutInfoCompat.Builder(app, id).setIcon(icon).setShortLabel(label)
-            .setIntent(Intent(intent).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT).setClass(app, ApiActivity::class.java)).build()
+            .setIntent(Intent(intent).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT).setClass(app, shortcutActivity)).build()
 
     val supportsPinning get() = ShortcutManagerCompat.isRequestPinShortcutSupported(app)
 
@@ -67,7 +71,7 @@ object HShortcuts {
     }
 
     fun addDynamicShortcut(packageName: String) {
-        if (HailData.biometricLogin) return
+        if (HailData.biometricLogin || !HailData.recentShortcuts) return
         val applicationInfo = HPackages.getApplicationInfoOrNull(packageName)
         val shortcut =
             ShortcutInfoCompat.Builder(app, packageName.hashCode().toString()) // Make id different from pin
@@ -77,7 +81,7 @@ object HShortcuts {
                     app.packageManager.defaultActivityIcon
                 ))).setShortLabel(
                     applicationInfo?.loadLabel(app.packageManager) ?: packageName
-                ).setIntent(HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, packageName).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT).setClass(app, ApiActivity::class.java)).build()
+                ).setIntent(HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, packageName).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT).setClass(app, shortcutActivity)).build()
         ShortcutManagerCompat.pushDynamicShortcut(app, shortcut)
         addDynamicShortcutAction(HailData.dynamicShortcutAction)
     }
@@ -109,8 +113,15 @@ object HShortcuts {
                     app, icon
                 )!!
             )
-        ).setShortLabel(app.getString(label)).setIntent(Intent(id).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT).setClass(app, ApiActivity::class.java)).build()
+        ).setShortLabel(app.getString(label)).setIntent(Intent(id).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT).setClass(app, shortcutActivity)).build()
         ShortcutManagerCompat.pushDynamicShortcut(app, shortcut)
+    }
+
+    fun removeRecentApps() {
+        val recentIds = ShortcutManagerCompat.getDynamicShortcuts(app)
+            .filter { it.intent?.action == HailApi.ACTION_LAUNCH }
+            .map { it.id }
+        if (recentIds.isNotEmpty()) ShortcutManagerCompat.removeDynamicShortcuts(app, recentIds)
     }
 
     fun removeAllDynamicShortcuts() {

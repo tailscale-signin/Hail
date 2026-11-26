@@ -7,7 +7,7 @@ from pathlib import Path
 report = Path(sys.argv[1])
 expected = {f"com.aistra.hail.testfixture.bench{i}" for i in range(1, 13)}
 times = {}
-for build, code in (("baseline", 40), ("current", 41)):
+for build, code in (("baseline", 40), ("current", 42)):
     rows = [json.loads(line) for line in (report / f"benchmark-{build}.jsonl").read_text().splitlines()]
     header, events = rows[0], rows[1:]
     assert header["build"] == code and header["writeErrorsThisProcess"] == 0
@@ -34,6 +34,8 @@ for build, code in (("baseline", 40), ("current", 41)):
                 assert not any(e["step"] == "bulk_write_fallback" for e in trace)
                 assert len(calls) == 12 and all(e["method"].endswith(".setComponentEnabledSettings") for e in calls)
                 if action == "freeze":
+                    confirmed = {e["package"] for e in trace if e["step"] == "disable_privacy" and e["disabledAndStopped"]}
+                    assert confirmed == expected
                     assert len(stop) <= 1
                     skipped = {e["package"] for e in trace if e["step"] == "force_stop_skipped"}
                     assert skipped | {e["package"] for e in stop} == expected

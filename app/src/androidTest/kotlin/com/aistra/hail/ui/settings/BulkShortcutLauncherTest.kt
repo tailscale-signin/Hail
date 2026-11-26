@@ -16,7 +16,7 @@ import com.aistra.hail.R
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.HailApi
 import com.aistra.hail.app.HailData
-import com.aistra.hail.ui.api.ApiActivity
+import com.aistra.hail.ui.api.InternalActionActivity
 import com.aistra.hail.ui.main.MainActivity
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -85,7 +85,7 @@ class BulkShortcutLauncherTest {
                     }
                     val shortcut = manager.pinnedShortcuts.single { it.id == pkg }
                     assertEquals(HailApi.ACTION_LAUNCH, shortcut.intent?.action)
-                    assertEquals(ApiActivity::class.java.name, shortcut.intent?.component?.className)
+                    assertEquals(InternalActionActivity::class.java.name, shortcut.intent?.component?.className)
                     assertEquals(pkg, shortcut.intent?.getStringExtra(HailData.KEY_PACKAGE))
                 }
                 await(By.text(context.getString(R.string.shortcut_batch_result, 2, 0, 0)))

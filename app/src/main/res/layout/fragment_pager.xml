@@ -9,7 +9,7 @@
         android:layout_height="match_parent"
         android:gravity="center"
         android:text="@string/nothing_here"
-        android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+        android:textAppearance="@style/TextAppearance.Hail.BodyLarge"
         android:visibility="gone" />
 
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout

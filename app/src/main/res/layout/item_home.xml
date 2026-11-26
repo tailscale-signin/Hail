@@ -22,13 +22,13 @@
             android:ellipsize="end"
             android:gravity="center_horizontal"
             android:maxLines="1"
-            android:textAppearance="@style/TextAppearance.Material3.BodyMedium"/>
+            android:textAppearance="@style/TextAppearance.Hail.BodyMedium"/>
     <com.google.android.material.textview.MaterialTextView
             android:id="@+id/app_availability"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:gravity="center"
             android:text="@string/package_unavailable"
-            android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
+            android:textAppearance="@style/TextAppearance.Hail.LabelSmall"
             android:visibility="gone"/>
 </LinearLayout>

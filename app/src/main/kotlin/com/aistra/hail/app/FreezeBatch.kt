@@ -10,7 +10,8 @@ data class FreezeResult(
     val singleLabel: String? = null,
     val failureMessage: String? = null,
     val notInstalled: Set<String> = emptySet(),
-    val failureReasons: Map<String, String> = emptyMap()
+    val failureReasons: Map<String, String> = emptyMap(),
+    val retainedSettings: Set<String> = emptySet()
 ) {
     fun reachedTarget(pkg: String, freezing: Boolean = false) =
         pkg in changed || pkg in unchanged || (freezing && pkg in notInstalled)

@@ -9,6 +9,7 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import androidx.annotation.RequiresApi
 import com.aistra.hail.HailApp.Companion.app
+import com.aistra.hail.ui.api.InternalActionActivity
 import com.aistra.hail.R
 import com.aistra.hail.app.HailApi
 import com.aistra.hail.app.HailData
@@ -37,7 +38,7 @@ class QSTileService : TileService() {
                 HailData.ACTION_LOCK_FREEZE -> HailApi.ACTION_LOCK_FREEZE
                 else -> HailApi.ACTION_UNFREEZE_ALL
             }
-        ).putExtra(HailApi.EXTRA_ORIGIN, HailApi.TILE).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ).setClass(this, InternalActionActivity::class.java).putExtra(HailApi.EXTRA_ORIGIN, HailApi.TILE).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (HTarget.U) startActivityAndCollapse(
             PendingIntent.getActivity(
                 this, 0, intent, PendingIntent.FLAG_IMMUTABLE

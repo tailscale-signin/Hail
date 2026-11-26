@@ -20,7 +20,7 @@ import com.aistra.hail.databinding.DialogPackageStatusBinding
 import com.aistra.hail.utils.DecisionLog
 import com.aistra.hail.utils.HPackages
 import com.aistra.hail.utils.HUI
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.aistra.hail.ui.PrivateDialogBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -53,7 +53,7 @@ class PackageStatusDialog : DialogFragment() {
         binding = DialogPackageStatusBinding.inflate(layoutInflater)
         binding.report.text = pkg
         message = (savedInstanceState ?: requireArguments()).getString(MESSAGE)
-        return MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.package_status_controls).setView(binding.root)
+        return PrivateDialogBuilder(requireContext()).setTitle(R.string.package_status_controls).setView(binding.root)
             .setPositiveButton(R.string.action_details, null).setNegativeButton(android.R.string.cancel, null)
             .setNeutralButton(R.string.copy_details, null).create()
     }
@@ -95,10 +95,16 @@ class PackageStatusDialog : DialogFragment() {
         val record = withContext(Dispatchers.IO) { lookup.find(pkg) }
         val setting = withContext(Dispatchers.IO) { record?.setting() }
         val enabled = record?.takeIf { it.installed }?.canDisable(setting)
+        val storedSetting = record?.takeIf { !it.installed && it.info?.let(HPackages::isSystemApp) == true }
+            ?.enabledSetting
+        val canChangeStoredSetting = storedSetting != null && method == HailData.MODE_SHIZUKU_DISABLE && shizukuUid != null
+        val storedDisabled = storedSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
+            storedSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
         val upgrade = enabled == false && setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER &&
             withContext(Dispatchers.IO) { lookup.disableSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED }
         trace?.event("status_controls", pkg, "workingMode" to mode, "effectiveMode" to method, "serviceUid" to shizukuUid,
-            "installed" to record?.installed, "enabled" to enabled, "observedSetting" to setting, "offerFullDisable" to upgrade)
+            "installed" to record?.installed, "enabled" to enabled, "observedSetting" to setting, "offerFullDisable" to upgrade,
+            "offerStoredSetting" to canChangeStoredSetting)
         val alert = dialog as? AlertDialog ?: return
         val modeName = resources.getStringArray(R.array.working_mode_entries).getOrNull(HailData.WORKING_MODE_VALUES.indexOf(mode)) ?: mode
         val label = record?.info?.loadLabel(requireContext().packageManager)?.toString() ?: pkg
@@ -109,9 +115,22 @@ class PackageStatusDialog : DialogFragment() {
             false -> if (upgrade) R.string.package_disabled_user else R.string.package_disabled
             null -> if (record == null) R.string.package_unknown_here else R.string.package_retained_here
         }
+        val stopConfirmed = record?.info?.let { !it.enabled && it.flags and android.content.pm.ApplicationInfo.FLAG_STOPPED != 0 } == true
+        val checkStop = method != null && enabled == false && !upgrade && !stopConfirmed
+        val storedStatus = when (storedSetting) {
+            PackageManager.COMPONENT_ENABLED_STATE_DEFAULT -> R.string.package_retained_setting_default
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> R.string.package_retained_setting_enabled
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER ->
+                R.string.package_retained_setting_disabled
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> R.string.package_retained_setting_until_used
+            else -> null
+        }
         binding.report.text = listOfNotNull(pkg, getString(R.string.package_user_mode, HPackages.myUserId, modeName),
             shizukuUid?.let { getString(if (it == 0) R.string.package_shizuku_root else R.string.package_shizuku_uid, it) },
             getString(status),
+            storedStatus?.let { getString(it) },
+            if (canChangeStoredSetting) getString(R.string.package_retained_setting_guidance) else null,
+            if (enabled == false && method != null) getString(if (stopConfirmed) R.string.disable_confirmed else R.string.disable_unconfirmed) else null,
             if (method == HailData.MODE_SHIZUKU_DISABLE && shizukuUid == 2000 &&
                 setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED) getString(R.string.package_until_used_shell) else null,
             if (enabled != null && method == null) getString(R.string.package_native_guidance) else null,
@@ -119,13 +138,15 @@ class PackageStatusDialog : DialogFragment() {
         alert.getButton(DialogInterface.BUTTON_POSITIVE).isVisible = record != null
         binding.removeFromHome.isVisible = enabled == null && HailData.isChecked(pkg)
         binding.removeFromHome.setOnClickListener { remove = true; dismiss() }
-        binding.enableInstead.isVisible = upgrade && pkg != requireContext().packageName
+        binding.enableInstead.isVisible = (upgrade || checkStop) && pkg != requireContext().packageName
         binding.enableInstead.isEnabled = true
         binding.enableInstead.setOnClickListener { if (method != null) change(false, method) }
         binding.packageAction.apply {
             isVisible = enabled == null || (method != null && pkg != requireContext().packageName)
             isEnabled = true
             setText(when {
+                canChangeStoredSetting -> if (storedDisabled) R.string.enable_app else R.string.disable_app
+                checkStop -> R.string.verify_stop
                 enabled == null -> R.string.check_again
                 upgrade -> R.string.apply_full_disable
                 method != mode -> if (enabled) R.string.disable_with_shizuku else R.string.enable_with_shizuku
@@ -133,7 +154,8 @@ class PackageStatusDialog : DialogFragment() {
                 else -> R.string.enable_app
             })
             setOnClickListener {
-                if (enabled != null && method != null) change(enabled || upgrade, method)
+                if (canChangeStoredSetting && method != null) change(!storedDisabled, method)
+                else if (enabled != null && method != null) change(enabled || upgrade || checkStop, method)
                 else { isEnabled = false; message = null; refresh() }
             }
         }

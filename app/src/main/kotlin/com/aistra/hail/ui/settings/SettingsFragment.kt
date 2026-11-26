@@ -58,7 +58,7 @@ import com.aistra.hail.ui.main.MainActivity
 import com.aistra.hail.ui.main.MainFragment
 import com.aistra.hail.ui.theme.AppTheme
 import com.aistra.hail.utils.*
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.aistra.hail.ui.PrivateDialogBuilder
 import com.google.android.material.textview.MaterialTextView
 import com.rosan.dhizuku.api.Dhizuku
 import com.rosan.dhizuku.api.DhizukuRequestPermissionListener
@@ -112,7 +112,18 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 defaultValue = HailData.MODE_DEFAULT,
                 onValueChange = ::onWorkingModeChange,
                 values = HailData.WORKING_MODE_VALUES,
-                entriesId = R.array.working_mode_entries,
+                valueToText = { it.toEntry(HailData.WORKING_MODE_VALUES, R.array.working_mode_entries) },
+                summary = { mode ->
+                    val name = mode.toEntry(HailData.WORKING_MODE_VALUES, R.array.working_mode_entries)
+                    val detail = when (mode.substringAfterLast('_')) {
+                        HailData.DISABLE -> R.string.privacy_disable
+                        HailData.HIDE -> R.string.privacy_hide
+                        HailData.SUSPEND -> R.string.privacy_suspend
+                        HailData.STOP -> R.string.privacy_stop
+                        else -> null
+                    }
+                    if (detail == null) name else "$name\n${stringResource(detail)}"
+                },
                 titleId = R.string.working_mode,
                 icon = Icons.Outlined.Adb,
                 type = ListPreferenceType.ALERT_DIALOG
@@ -121,8 +132,13 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 key = HailData.BIOMETRIC_LOGIN,
                 defaultValue = false,
                 onValueChange = { _, value ->
-                    if (value) resetDynamicShortcuts()
-                    true
+                    if (value && !com.aistra.hail.ui.DeviceUnlock.available(requireContext())) {
+                        HUI.showToast(R.string.unlock_unavailable)
+                        false
+                    } else {
+                        if (value) resetDynamicShortcuts()
+                        true
+                    }
                 },
                 titleId = R.string.action_biometric,
                 icon = Icons.Outlined.Fingerprint
@@ -130,6 +146,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
             horizontalDivider()
             preferenceCategory(key = "backup", title = { Text(stringResource(R.string.backup_title)) })
             preference(key = "backup_save", title = { Text(stringResource(R.string.backup_save)) },
+                summary = { Text(stringResource(R.string.backup_file_contents)) },
                 icon = { Icon(Icons.Outlined.Save, contentDescription = null) },
                 onClick = { saveBackup.launch("Hail-backup.json") })
             preference(key = "backup_restore", title = { Text(stringResource(R.string.backup_restore)) },
@@ -146,14 +163,28 @@ class SettingsFragment : MainFragment(), MenuProvider {
                     summary = { Text(stringResource(R.string.debug_logging_summary)) },
                     icon = { Icon(Icons.Outlined.BugReport, contentDescription = null) })
             }
+            preference(key = "erase_debug_log", title = { Text(stringResource(R.string.erase_debug_log)) },
+                icon = { Icon(Icons.Outlined.CleaningServices, contentDescription = null) },
+                onClick = {
+                    PrivateDialogBuilder(requireContext()).setMessage(R.string.erase_debug_confirm)
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setPositiveButton(R.string.erase_debug_log) { _, _ ->
+                            lifecycleScope.launch {
+                                runCatching { DecisionLog.clear() }
+                                    .onSuccess { HUI.showToast(R.string.debug_log_cleared) }
+                                    .onFailure { HUI.showToast(R.string.debug_clear_failed) }
+                            }
+                        }.show()
+                })
             preference(key = "export_debug_log", title = { Text(stringResource(R.string.debug_export)) },
+                summary = { Text(stringResource(R.string.debug_file_contents)) },
                 icon = { Icon(Icons.Outlined.SaveAlt, contentDescription = null) },
                 onClick = { saveDebugLog.launch(DecisionLog.suggestedName()) })
             horizontalDivider()
             preferenceCategory(key = "customize", title = { Text(text = stringResource(R.string.title_customize)) })
             listPreference(
                 key = HailData.APP_THEME,
-                defaultValue = HailData.FOLLOW_SYSTEM,
+                defaultValue = HailData.THEME_DARK,
                 onValueChange = { _, value ->
                     app.setAppTheme(value)
                     true
@@ -288,6 +319,12 @@ class SettingsFragment : MainFragment(), MenuProvider {
             )
             horizontalDivider()
             preferenceCategory(key = "shortcuts", title = { Text(text = stringResource(R.string.title_shortcuts)) })
+            switchPreference(key = HailData.RECENT_SHORTCUTS, defaultValue = false,
+                titleId = R.string.recent_shortcuts, icon = Icons.Outlined.AppShortcut,
+                onValueChange = { _, enabled ->
+                    if (!enabled) app.clearRecentShortcuts()
+                    true
+                })
             preference(
                 key = "add_pin_shortcut",
                 title = { Text(text = stringResource(R.string.action_add_pin_shortcut)) },
@@ -468,10 +505,10 @@ class SettingsFragment : MainFragment(), MenuProvider {
     else HPackages.getApplicationInfoOrNull(pack)?.loadLabel(app.packageManager)?.toString() ?: pack
 
     private fun addPinShortcut() {
-        MaterialAlertDialogBuilder(requireActivity()).setTitle(R.string.action_add_pin_shortcut)
+        PrivateDialogBuilder(requireActivity()).setTitle(R.string.action_add_pin_shortcut)
             .setItems(R.array.pin_shortcut_entries) { _, which ->
                 when (which) {
-                    0 -> MaterialAlertDialogBuilder(requireActivity()).setTitle(R.string.action_freeze_tag)
+                    0 -> PrivateDialogBuilder(requireActivity()).setTitle(R.string.action_freeze_tag)
                         .setItems(HailData.tags.map { it.first }.toTypedArray()) { _, index ->
                             val tag = HailData.tags[index].first
                             HShortcuts.addPinShortcut(
@@ -484,7 +521,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
                             )
                         }.setNegativeButton(android.R.string.cancel, null).show()
 
-                    1 -> MaterialAlertDialogBuilder(requireActivity()).setTitle(R.string.action_unfreeze_tag)
+                    1 -> PrivateDialogBuilder(requireActivity()).setTitle(R.string.action_unfreeze_tag)
                         .setItems(HailData.tags.map { it.first }.toTypedArray()) { _, index ->
                             val tag = HailData.tags[index].first
                             HShortcuts.addPinShortcut(
@@ -553,7 +590,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
         activity.invalidateOptionsMenu()
         when {
             mode.startsWith(HailData.OWNER) -> if (!HPolicy.isDeviceOwnerActive) {
-                MaterialAlertDialogBuilder(requireActivity()).setTitle(R.string.title_set_owner)
+                PrivateDialogBuilder(requireActivity()).setTitle(R.string.title_set_owner)
                     .setMessage(getString(R.string.msg_set_owner, HPolicy.ADB_COMMAND))
                     .setPositiveButton(android.R.string.ok, null)
                     .setNeutralButton(android.R.string.copy) { _, _ -> HUI.copyText(HPolicy.ADB_COMMAND) }.show()
@@ -671,7 +708,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
             mode.startsWith(HailData.PRIVAPP) -> {
                 val permission = if (mode == HailData.MODE_PRIVAPP_DISABLE) CHANGE_COMPONENT_ENABLED_STATE else "android.permission.FORCE_STOP_PACKAGES"
                 if (ContextCompat.checkSelfPermission(requireContext(), permission) != PackageManager.PERMISSION_GRANTED) {
-                    MaterialAlertDialogBuilder(requireContext()).setMessage(R.string.privileged_mode_permission)
+                    PrivateDialogBuilder(requireContext()).setMessage(R.string.privileged_mode_permission)
                         .setPositiveButton(android.R.string.ok, null).show()
                     return decision(false, "Required Android permission denied")
                 }
@@ -683,7 +720,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
 
     private suspend fun onTerminalResult(exitValue: Int, msg: String?) = withContext(Dispatchers.Main) {
         if (exitValue == 0 && msg.isNullOrBlank()) return@withContext
-        MaterialAlertDialogBuilder(requireActivity()).apply {
+        PrivateDialogBuilder(requireActivity()).apply {
             if (!msg.isNullOrBlank()) {
                 if (exitValue != 0) {
                     setTitle(getString(R.string.operation_failed, exitValue.toString()))
@@ -726,7 +763,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
             setSingleLine()
             filters = arrayOf()
         }
-        MaterialAlertDialogBuilder(requireActivity()).setTitle(R.string.action_terminal).setView(binding.root)
+        PrivateDialogBuilder(requireActivity()).setTitle(R.string.action_terminal).setView(binding.root)
             .setPositiveButton(android.R.string.ok) { _, _ ->
                 lifecycleScope.launch {
                     val result = AppManager.execute(binding.editText.text.toString())

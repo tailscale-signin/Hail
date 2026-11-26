@@ -29,7 +29,7 @@ import com.aistra.hail.utils.HPackages
 import com.aistra.hail.utils.HPolicy
 import com.aistra.hail.utils.HUI
 import com.aistra.hail.views.HRecyclerView
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.aistra.hail.ui.PrivateDialogBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -57,7 +57,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             lifecycleScope.launch {
                 val applicationInfo = HPackages.getApplicationInfoOrNull(exportApkPkg) ?: return@launch
                 val dialog =
-                    MaterialAlertDialogBuilder(activity).setView(R.layout.dialog_progress).setCancelable(false).show()
+                    PrivateDialogBuilder(activity).setView(R.layout.dialog_progress).setCancelable(false).show()
                 runCatching {
                     withContext(Dispatchers.IO) {
                         FileInputStream(applicationInfo.sourceDir).use { source ->
@@ -188,7 +188,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             when {
                 result.reachedTarget(pkg, disable) -> HUI.showToast(AppManager.resultMessage(result, disable))
                 pkg in result.missing || pkg in result.notInstalled -> HUI.showToast(R.string.app_not_installed)
-                isResumed -> MaterialAlertDialogBuilder(requireContext())
+                isResumed -> PrivateDialogBuilder(requireContext())
                     .setTitle(info.loadLabel(app.packageManager))
                     .setMessage(AppManager.resultMessage(result, disable))
                     .setPositiveButton(R.string.action_details) { _, _ -> openAppInfo(pkg) }
@@ -222,7 +222,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     }
 
     private fun showUninstallDialog(name: CharSequence, pkg: String) {
-        MaterialAlertDialogBuilder(activity).setTitle(name).setMessage(R.string.msg_uninstall)
+        PrivateDialogBuilder(activity).setTitle(name).setMessage(R.string.msg_uninstall)
             .setPositiveButton(android.R.string.ok) { _, _ ->
                 if (AppManager.uninstallApp(pkg)) updateAppList()
             }.setNegativeButton(android.R.string.cancel, null).show()
@@ -279,7 +279,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             R.id.sort_by_install -> changeAppsSort(HailData.SORT_INSTALL, item)
             R.id.sort_by_update -> changeAppsSort(HailData.SORT_UPDATE, item)
             R.id.filter_user_apps -> changeAppsFilter(HailData.FILTER_USER_APPS, item)
-            R.id.filter_system_apps -> MaterialAlertDialogBuilder(activity)
+            R.id.filter_system_apps -> PrivateDialogBuilder(activity)
                 .setMessage(getString(R.string.system_app_controls) + "\n\n" + getString(R.string.freeze_system_app))
                 .setPositiveButton(R.string.action_continue) { _, _ ->
                     changeAppsFilter(HailData.FILTER_SYSTEM_APPS, item)

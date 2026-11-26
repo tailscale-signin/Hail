@@ -1,7 +1,6 @@
 package com.aistra.hail.utils
 
 import android.annotation.SuppressLint
-import android.app.AppOpsManager
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
@@ -80,6 +79,9 @@ object HShizuku {
         private val flagType = if (HTarget.T) Long::class.javaPrimitiveType!! else Int::class.javaPrimitiveType!!
         // Installed for this user, including apps with disabled launcher components.
         private val flags: Any = if (HTarget.T) HPackages.INSTALLED_FOR_USER.toLong() else HPackages.INSTALLED_FOR_USER
+        private val retainedFlags: Any = (HPackages.INSTALLED_FOR_USER or PackageManager.MATCH_UNINSTALLED_PACKAGES).let {
+            if (HTarget.T) it.toLong() else it
+        }
         private val user = HPackages.myUserId
         private val getSetting by lazy { pm.javaClass.getMethod("getApplicationEnabledSetting", String::class.java, Int::class.java) }
         private val setSetting by lazy { pm.javaClass.getMethod(
@@ -93,15 +95,22 @@ object HShizuku {
 
         fun setting(pkg: String) = getSetting.invoke(pm, pkg, user) as Int
 
-        private fun application(pkg: String): ApplicationInfo? {
-            val result = if (HTarget.P) HiddenApiBypass.invoke(pm.javaClass, pm, "getApplicationInfo", pkg, flags, user)
+        fun application(pkg: String, includeRetained: Boolean = false): ApplicationInfo? {
+            val queryFlags = if (includeRetained) retainedFlags else flags
+            val result = if (HTarget.P) HiddenApiBypass.invoke(pm.javaClass, pm, "getApplicationInfo", pkg, queryFlags, user)
             else pm.javaClass.getMethod("getApplicationInfo", String::class.java, flagType, Int::class.java)
-                .invoke(pm, pkg, flags, user)
+                .invoke(pm, pkg, queryFlags, user)
             return result as? ApplicationInfo
         }
 
-        fun find(pkg: String): HPackages.UserPackage? =
-            application(pkg)?.let { HPackages.UserPackage(it, true, setting(pkg)) }
+        fun find(pkg: String): HPackages.UserPackage? {
+            val installed = application(pkg)
+            val info = installed ?: application(pkg, includeRetained = true) ?: return null
+            // Like upstream, retained system packages can still have a per-user enabled override.
+            // Reading or changing that override does not install the package for this user.
+            return HPackages.UserPackage(info,
+                installed != null || info.flags and ApplicationInfo.FLAG_INSTALLED != 0, setting(pkg))
+        }
 
         fun installed(): List<ApplicationInfo> {
             val entries = if (HTarget.P) {
@@ -162,24 +171,9 @@ object HShizuku {
                     }.onFailure { trace.error("readback_failed", pkg, it) }
                 }
             }
-            if (disabled && verified.isNotEmpty()) stopRunningPackages(verified, trace)
             return verified
         }
 
-        private fun stopRunningPackages(verified: Set<String>, trace: DecisionTrace?) {
-            // Inspect fresh flags after disabling. A rejected write must never force-stop the app.
-            val inventory = if (verified.size >= 8) runCatching { installed().associateBy { it.packageName } }
-                .onFailure { trace?.error("stop_inventory_failed", null, it) }.getOrNull() else null
-            for (pkg in verified) {
-                val info = inventory?.get(pkg) ?: runCatching { application(pkg) }.getOrNull()
-                if (info != null && info.flags and ApplicationInfo.FLAG_STOPPED != 0) {
-                    trace?.event("force_stop_skipped", pkg, "reason" to "Android already reports the package stopped")
-                } else {
-                    val stopped = forceStopApp(pkg, trace)
-                    trace?.event("force_stop", pkg, "succeeded" to stopped)
-                }
-            }
-        }
     }
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
@@ -196,10 +190,6 @@ object HShizuku {
             trace?.skipped(packageName, "Backend requires application metadata")
             return false
         }
-        if (hidden) {
-            val stopped = forceStopApp(packageName, trace)
-            trace?.event("force_stop", packageName, "succeeded" to stopped)
-        }
         return runCatching {
             val pm = asInterface("android.content.pm.IPackageManager", "package")
             pm::class.java.getMethod(
@@ -209,6 +199,11 @@ object HShizuku {
             trace?.error("android_error", packageName, it)
             HLog.e(it)
             false
+        }.also { accepted ->
+            if (accepted && hidden) {
+                val stopped = forceStopApp(packageName, trace)
+                trace?.event("force_stop", packageName, "succeeded" to stopped)
+            }
         }
     }
 
@@ -216,14 +211,6 @@ object HShizuku {
         if (HPackages.getApplicationInfoOrNull(packageName) == null) {
             trace?.skipped(packageName, "Backend requires application metadata")
             return false
-        }
-        if (HTarget.P) {
-            val restricted = setAppRestricted(packageName, suspended)
-            trace?.event("background_restriction", packageName, "requested" to suspended, "accepted" to restricted)
-        }
-        if (suspended) {
-            val stopped = forceStopApp(packageName, trace)
-            trace?.event("force_stop", packageName, "succeeded" to stopped)
         }
         return runCatching {
             val pm = asInterface("android.content.pm.IPackageManager", "package")
@@ -267,6 +254,11 @@ object HShizuku {
             trace?.error("android_error", packageName, it)
             HLog.e(it)
             false
+        }.also { accepted ->
+            if (accepted && suspended) {
+                val stopped = forceStopApp(packageName, trace)
+                trace?.event("force_stop", packageName, "succeeded" to stopped)
+            }
         }
     }
 
@@ -307,24 +299,6 @@ object HShizuku {
             HiddenApiBypass.invoke(it::class.java, it, "setNeutralButtonAction", 1 /*BUTTON_ACTION_UNSUSPEND*/)
             HiddenApiBypass.invoke(it::class.java, it, "build")
         }
-
-    @RequiresApi(Build.VERSION_CODES.P)
-    fun setAppRestricted(packageName: String, restricted: Boolean): Boolean = runCatching {
-        val appops = asInterface("com.android.internal.app.IAppOpsService", Context.APP_OPS_SERVICE)
-        HiddenApiBypass.invoke(
-            appops::class.java,
-            appops,
-            "setMode",
-            HiddenApiBypass.invoke(AppOpsManager::class.java, null, "strOpToOp", "android:run_any_in_background"),
-            HPackages.packageUid(packageName),
-            packageName,
-            if (restricted) AppOpsManager.MODE_IGNORED else AppOpsManager.MODE_ALLOWED
-        )
-        true
-    }.getOrElse {
-        HLog.e(it)
-        false
-    }
 
     fun uninstallApp(packageName: String): Boolean =
         execute("pm ${if (HPackages.canUninstallNormally(packageName)) "uninstall" else "uninstall --user current"} $packageName").first == 0

@@ -68,7 +68,7 @@ class LaunchAppHook : XposedModule() {
         val packageManager = context.packageManager
         val method = packageManager.javaClass.getMethod("isPackageSuspended", String::class.java)
         if (method.invoke(packageManager, packageName) as Boolean) {
-            context.startActivity(HailApi.getIntentForPackage(HailApi.ACTION_UNFREEZE, packageName))
+            context.startActivity(HailApi.getIntentForPackage(HailApi.ACTION_UNFREEZE, packageName).setPackage(BuildConfig.APPLICATION_ID))
 
             /**
              * It took about 500 milliseconds from [Context.startActivity]

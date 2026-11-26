@@ -5,6 +5,7 @@ plugins {
 
 android {
     val signingProps = file("../signing.properties")
+    val officialRelease = providers.gradleProperty("officialRelease").map(String::toBoolean).getOrElse(false)
     val commitHash = providers.exec {
         workingDir = rootDir
         commandLine = "git rev-parse --short HEAD".split(" ")
@@ -24,8 +25,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 23
         targetSdk = 37
-        versionCode = 41
-        versionName = "1.13.4"
+        versionCode = 42
+        versionName = "1.13.5"
     }
 
     buildTypes {
@@ -36,7 +37,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            if (!commitSubject.startsWith("[release]")) versionNameSuffix = "-g$commitHash"
+            if (!officialRelease && !commitSubject.startsWith("[release]")) versionNameSuffix = "-g$commitHash"
             signingConfig = if (signingProps.exists()) {
                 val props = `java.util`.Properties().apply { load(signingProps.reader()) }
                 signingConfigs.create("release") {
@@ -107,7 +108,6 @@ dependencies {
     implementation(libs.dhizuku.api)
     implementation(libs.appiconloader)
     implementation(libs.compose.preference)
-    implementation(libs.commons.text)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.hiddenapibypass)
     compileOnly(libs.libxposed.api)

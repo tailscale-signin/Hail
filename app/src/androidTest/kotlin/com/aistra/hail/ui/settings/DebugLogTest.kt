@@ -74,6 +74,10 @@ class DebugLogTest {
             assertEquals("logging_stopped", events.last().getString("step"))
             assertEquals("captured_last", events[events.lastIndex - 1].getString("step"))
             assertFalse(events.any { it.getString("step") == "after_opt_out" })
+            DecisionLog.clear()
+            DecisionLog.export(uri)
+            val cleared = requireNotNull(ctx.contentResolver.openInputStream(uri)).bufferedReader().use { it.readLines() }
+            assertEquals(1, cleared.size) // The export header contains no events.
         } finally {
             DecisionLog.setEnabled(false)
             ctx.contentResolver.delete(uri, null, null)

@@ -29,6 +29,22 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class DeviceFreezeTest {
+    @Test fun privateDefaultsAndBrandResourcesArePackaged() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val pm = context.packageManager
+        assertEquals(0, context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP)
+        assertEquals(PackageManager.PERMISSION_DENIED, pm.checkPermission(Manifest.permission.INTERNET, context.packageName))
+        val internal = android.content.ComponentName(context, com.aistra.hail.ui.api.InternalActionActivity::class.java)
+        assertFalse(pm.getActivityInfo(internal, 0).exported)
+        assertTrue(pm.getActivityInfo(android.content.ComponentName(context, ApiActivity::class.java), 0).exported)
+        assertNotNull(androidx.core.content.res.ResourcesCompat.getFont(context, com.aistra.hail.R.font.proxima_nova))
+        val config = android.content.res.Configuration(context.resources.configuration)
+        config.uiMode = (config.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK.inv()) or
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val dark = context.createConfigurationContext(config)
+        assertEquals(android.graphics.Color.rgb(0, 255, 222), dark.getColor(com.aistra.hail.R.color.md_theme_primary))
+    }
+
     @Test fun freezeRepeatThenThawLaunchAndRestoreFromBackup() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val ctx = instrumentation.targetContext
@@ -44,17 +60,33 @@ class DeviceFreezeTest {
         val device = UiDevice.getInstance(instrumentation)
         val originalLibrary = withContext(Dispatchers.Main) { HailData.backupSnapshot() }
         val automation = instrumentation.uiAutomation
-        automation.adoptShellPermissionIdentity(Manifest.permission.CHANGE_COMPONENT_ENABLED_STATE)
+        automation.adoptShellPermissionIdentity(Manifest.permission.CHANGE_COMPONENT_ENABLED_STATE, "android.permission.FORCE_STOP_PACKAGES")
         try {
             prefs.edit().putString(HailData.WORKING_MODE, HailData.MODE_PRIVAPP_DISABLE).commit()
+            ctx.startActivity(requireNotNull(ctx.packageManager.getLaunchIntentForPackage(packages.first())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            assertTrue(device.wait(Until.hasObject(By.pkg(packages.first())), 15_000))
+            assertFalse(HPackages.isAppStopped(packages.first()))
             val start = SystemClock.elapsedRealtime()
             val freeze = AppManager.changeFrozen(packages + packages + ctx.packageName, true)
             val freezeMs = SystemClock.elapsedRealtime() - start
             assertEquals(packages.toSet(), freeze.changed)
             assertTrue(packages.all(::disabled))
+            assertTrue(packages.all(HPackages::isAppStopped))
             assertEquals(packages.toSet(), AppManager.changeFrozen(packages, true).unchanged)
+            val prompt = By.text(ctx.getString(com.aistra.hail.R.string.external_action))
+            val external = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("hail://launch?package=${packages.first()}"))
+                .putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT)
+                .setClass(ctx, ApiActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(external)
+            assertTrue(device.wait(Until.hasObject(prompt), 10_000))
+            assertTrue(disabled(packages.first()))
+            device.findObject(By.res("android", "button2")).click()
+            assertTrue(device.wait(Until.gone(prompt), 10_000))
+            assertTrue(disabled(packages.first()))
             ctx.startActivity(HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, packages.first())
                 .setClass(ctx, ApiActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            assertTrue(device.wait(Until.hasObject(prompt), 10_000))
+            device.findObject(By.res("android", "button1")).click()
             assertTrue(device.wait(Until.hasObject(By.pkg(packages.first())), 15_000))
             assertFalse(disabled(packages.first()))
             assertTrue(disabled(packages.last()))

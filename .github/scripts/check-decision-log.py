@@ -7,7 +7,7 @@ path, server, expected_version = sys.argv[1:]
 header, *events = [json.loads(line) for line in Path(path).read_text().splitlines()]
 uid, disabled = (0, 2) if server == "root" else (2000, 3)
 assert header["schema"] == 1 and header["recordingAtExport"] is False
-assert header["version"] == expected_version and header["build"] == 41 and header["sdk"] == 36 and header["writeErrorsThisProcess"] == 0
+assert header["version"] == expected_version and header["build"] == 42 and header["sdk"] == 36 and header["writeErrorsThisProcess"] == 0
 assert len({e["session"] for e in events if e["step"] == "session_started"}) >= 2
 assert events[-1]["step"] == "logging_stopped"
 for session in {e["session"] for e in events}:
@@ -40,6 +40,7 @@ operation("home_all", "freeze", check("permission", serviceUid=uid, granted=True
           check("enabled_setting", package=clock, requestedSetting=disabled),
           check("android_call", package=clock, requestedSetting=disabled),
           check("readback", package=clock, observedSetting=disabled, verified=True),
+          check("disable_privacy", package=clock, disabledAndStopped=True),
           check("outcome", package=clock, result="changed"))
 operation("home_all", "freeze", check("skipped", package=clock, reason="Already in the requested state"),
           check("batch_result", changed=0, unchanged=2))

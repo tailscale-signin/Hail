@@ -45,7 +45,7 @@ import com.aistra.hail.ui.theme.AppTheme
 import com.aistra.hail.utils.*
 import com.aistra.hail.work.HWork
 import com.google.android.material.color.MaterialColors
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.aistra.hail.ui.PrivateDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.tabs.TabLayout
 import java.text.Collator
@@ -265,7 +265,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                 ) || frozen)
             }
         val menu = if (showStatus) listOf(getString(R.string.package_status_controls)) + entries else entries
-        MaterialAlertDialogBuilder(activity).setTitle(row.label).setItems(menu.toTypedArray()) { _, index ->
+        PrivateDialogBuilder(activity).setTitle(row.label).setItems(menu.toTypedArray()) { _, index ->
             if (showStatus && index == 0) {
                 showPackageStatus(pkg)
                 return@setItems
@@ -279,7 +279,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                     values.forEachIndexed { i, it ->
                         entries[i] = resources.getQuantityString(R.plurals.deferred_task_entry, it, it)
                     }
-                    MaterialAlertDialogBuilder(activity).setTitle(R.string.action_deferred_task)
+                    PrivateDialogBuilder(activity).setTitle(R.string.action_deferred_task)
                         .setItems(entries) { _, i ->
                             HWork.setDeferredFrozen(pkg, !frozen, values[i].toLong())
                             Snackbar.make(
@@ -305,7 +305,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                 5 -> tagDialog(info)
 
                 6 -> tabs?.takeIf { it.tabCount > 1 }?.let {
-                    MaterialAlertDialogBuilder(requireActivity()).setTitle(R.string.action_unfreeze_tag)
+                    PrivateDialogBuilder(requireActivity()).setTitle(R.string.action_unfreeze_tag)
                         .setItems(HailData.tags.map { it.first }.toTypedArray()) { _, index ->
                             HShortcuts.addPinShortcut(
                                 info,
@@ -342,7 +342,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         val checkedItems = BooleanArray(HailData.tags.size) { index ->
             HailData.tags[index].second in info.tagIdList
         }
-        MaterialAlertDialogBuilder(activity).setTitle(R.string.action_tag_set).setMultiChoiceItems(
+        PrivateDialogBuilder(activity).setTitle(R.string.action_tag_set).setMultiChoiceItems(
             HailData.tags.map { it.first }.toTypedArray(), checkedItems
         ) { _, index, isChecked ->
             checkedItems[index] = isChecked
@@ -369,7 +369,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
     }
 
     private fun onMultiSelect() {
-        MaterialAlertDialogBuilder(activity).setTitle(
+        PrivateDialogBuilder(activity).setTitle(
             getString(
                 R.string.msg_selected, selectedList.size.toString()
             )
@@ -432,7 +432,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             }
         }
         val states = mutableStateListOf(*initialStates)
-        MaterialAlertDialogBuilder(activity).setTitle(R.string.action_tag_set).setView(ComposeView(activity).apply {
+        PrivateDialogBuilder(activity).setTitle(R.string.action_tag_set).setView(ComposeView(activity).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent { AppTheme { TriStateTagList(initialStates, states) } }
         }).setPositiveButton(android.R.string.ok) { _, _ ->
@@ -528,7 +528,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             trace?.skipped(packages.singleOrNull(), "Idle mode requires package controls or Android Settings")
             val only = packages.singleOrNull()
             if (only != null) showPackageStatus(only)
-            else MaterialAlertDialogBuilder(activity).setMessage(R.string.msg_guide)
+            else PrivateDialogBuilder(activity).setMessage(R.string.msg_guide)
                 .setPositiveButton(android.R.string.ok, null).show()
             return
         }
@@ -542,7 +542,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                     runCatching { !HShizuku.isRoot }.getOrDefault(false)
                 }) {
                     trace?.skipped(null, "ADB-backed Shizuku cannot hide packages")
-                    if (isResumed) MaterialAlertDialogBuilder(host).setMessage(R.string.shizuku_hide_adb)
+                    if (isResumed) PrivateDialogBuilder(host).setMessage(R.string.shizuku_hide_adb)
                         .setPositiveButton(android.R.string.ok, null).show()
                     return@launch
                 }
@@ -573,7 +573,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                             if (names.isNotEmpty()) append("\n\n").append(getString(title)).append('\n').append(names.joinToString("\n"))
                         }
                     }
-                    MaterialAlertDialogBuilder(host).setTitle(if (frozen) R.string.action_freeze else R.string.action_unfreeze)
+                    PrivateDialogBuilder(host).setTitle(if (frozen) R.string.action_freeze else R.string.action_unfreeze)
                         .setMessage(details).setPositiveButton(android.R.string.ok, null)
                         .setNeutralButton(R.string.copy_details) { _, _ -> HUI.copyText(details) }
                         .apply {
@@ -599,7 +599,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         val binding = DialogInputBinding.inflate(layoutInflater)
         binding.inputLayout.setHint(R.string.tag)
         list ?: binding.editText.setText(tag?.first ?: "")
-        MaterialAlertDialogBuilder(activity).setTitle(if (list != null) R.string.action_tag_add else R.string.action_tag_set)
+        PrivateDialogBuilder(activity).setTitle(if (list != null) R.string.action_tag_add else R.string.action_tag_set)
             .setView(binding.root).setPositiveButton(android.R.string.ok) { _, _ ->
                 val tagName = binding.editText.text.toString()
                 val tagId = tagName.hashCode()

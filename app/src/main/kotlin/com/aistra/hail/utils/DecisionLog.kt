@@ -126,6 +126,14 @@ object DecisionLog {
         }
     }
 
+    /** All earlier writes run before deletion. If recording is on, later events start a new history. */
+    suspend fun clear() = withContext(dispatcher) {
+        for (file in listOf(previous, current)) {
+            if (file.exists() && !file.delete()) throw IOException("Cannot erase debug log")
+        }
+        writeFailures = 0L
+    }
+
     suspend fun export(uri: Uri) {
         // Snapshot the bounded files on the writer queue before handing data to the chosen document provider.
         val snapshot = withContext(dispatcher) {

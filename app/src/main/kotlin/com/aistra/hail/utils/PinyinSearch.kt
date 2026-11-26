@@ -3,129 +3,52 @@ package com.aistra.hail.utils
 import net.sourceforge.pinyin4j.PinyinHelper
 import java.util.Locale
 
-/** 中文拼音搜索类 */
 object PinyinSearch {
-    /**
-     * 当前语言是中文时使用首字母和全拼进行搜索，满足任一条件则显示在搜索结果中
-     * @param raw 需要匹配的原始字符串
-     * @param query 输入的字符串
-     */
     fun searchPinyinAll(raw: String?, query: String?): Boolean {
         if (query.isNullOrEmpty()) return true
-        if (raw.isNullOrEmpty()) return false
-        return if (Locale.getDefault().language != Locale.CHINESE.language) false
-        else searchCap(raw, query) || searchAllSpell(raw, query)
+        if (raw.isNullOrEmpty() || query.length > 48 || Locale.getDefault().language != Locale.CHINESE.language) return false
+        return matchesPronunciation(raw, query)
     }
 
-    /**
-     * 根据拼音首字母进行搜索
-     * 如搜索“计算器”时只需输入 "jsq"
-     */
-    private fun searchCap(raw: String, pinyinCap: String): Boolean {
-        if (pinyinCap.length > 8) return false // "最强多媒体播放器".length
-        for (index in getNameStringList(raw)) {
-            if (index.contains(pinyinCap, true)) {
-                return true
+    internal fun matchesPronunciation(raw: String, query: String): Boolean {
+        require(query.length in 1..48)
+        // Bit n represents a matching substring of length n + 1. Merge alternatives only
+        // at syllable boundaries, so letters from different readings cannot be spliced together.
+        val masks = mutableMapOf<Char, Long>()
+        for ((index, ch) in query.withIndex()) {
+            val key = ch.uppercaseChar().lowercaseChar()
+            masks[key] = (masks[key] ?: 0L) or (1L shl index)
+        }
+        val complete = 1L shl (query.length - 1)
+        fun advance(state: Long, ch: Char) =
+            ((state shl 1) or 1L) and (masks[ch.uppercaseChar().lowercaseChar()] ?: 0L)
+
+        var spellings = 0L
+        var initials = 0L
+        for (ch in raw) {
+            val readings = PinyinHelper.toHanyuPinyinStringArray(ch)
+            if (readings == null) {
+                spellings = advance(spellings, ch)
+                initials = advance(initials, ch)
+                if ((spellings and complete) != 0L || (query.length <= 8 && (initials and complete) != 0L)) return true
+                continue
             }
+            var nextSpellings = 0L
+            var nextInitials = 0L
+            for (reading in readings) {
+                var state = spellings
+                // pinyin4j appends a tone digit to each reading.
+                for (index in 0 until reading.lastIndex) {
+                    state = advance(state, reading[index])
+                    if ((state and complete) != 0L) return true
+                }
+                nextSpellings = nextSpellings or state
+                if (query.length <= 8) nextInitials = nextInitials or advance(initials, reading.first())
+            }
+            spellings = nextSpellings
+            initials = nextInitials
+            if ((initials and complete) != 0L) return true
         }
         return false
-    }
-
-    /**
-     * 根据全部拼音进行搜索
-     * 如搜索“计算器”时只需输入 "jisuanqi"
-     */
-    private fun searchAllSpell(raw: String, pinyinAll: String): Boolean {
-        if (pinyinAll.length > 48) return false // "chuang".length * 8
-        for (index in getNameStringPinyinAll(raw)) {
-            if (index.contains(pinyinAll, true)) {
-                return true
-            }
-        }
-        return false
-    }
-
-    private fun getNameStringPinyinAll(target: String): ArrayList<String> {
-        val res = ArrayList<String>()
-        getNameCapListPinyinAll(Array(target.length) { "" }, 0, target, res)
-        return res
-    }
-
-    private fun getNameStringList(target: String): ArrayList<String> {
-        val res = ArrayList<String>()
-        getNameCapList(CharArray(target.length), 0, target, res)
-        return res
-    }
-
-    private fun getNameCapList(
-        capList: CharArray, currentIndex: Int, target: String, result: ArrayList<String>
-    ) {
-        if (currentIndex == target.length - 1) {
-            val arrayOrNull = PinyinHelper.toHanyuPinyinStringArray(target[currentIndex])
-            if (arrayOrNull == null) {
-                capList[currentIndex] = target[currentIndex]
-                result.add(String(capList))
-            } else {
-                val arrayOrNullCharArray = arrayOrNull.map { e -> e[0] }.distinct().toCharArray()
-                for (item in arrayOrNullCharArray) {
-                    capList[currentIndex] = item
-                    result.add(String(capList))
-                }
-            }
-
-        } else {
-            val arrayOrNull = PinyinHelper.toHanyuPinyinStringArray(target[currentIndex])
-            if (arrayOrNull == null) {
-                val arr = capList.copyOf()
-                arr[currentIndex] = target[currentIndex]
-                val newIndex = currentIndex + 1
-                getNameCapList(arr, newIndex, target, result)
-            } else {
-                val arrayOrNullCharArray = arrayOrNull.map { e -> e[0] }.distinct().toCharArray()
-                for (item in arrayOrNullCharArray) {
-                    val arr = capList.copyOf()
-                    arr[currentIndex] = item
-                    val newIndex = currentIndex + 1
-                    getNameCapList(arr, newIndex, target, result)
-                }
-            }
-
-        }
-    }
-
-    private fun getNameCapListPinyinAll(
-        fullList: Array<String>, currentIndex: Int, target: String, result: ArrayList<String>
-    ) {
-        if (currentIndex == target.length - 1) {
-            val arrayOrNull = PinyinHelper.toHanyuPinyinStringArray(target[currentIndex])
-            if (arrayOrNull == null) {
-                fullList[currentIndex] = target[currentIndex].toString()
-                result.add(fullList.joinToString(""))
-            } else {
-                val arrayDis = arrayOrNull.map { e -> e.substring(0, e.length - 1) }.distinct()
-                for (item in arrayDis) {
-                    fullList[currentIndex] = item
-                    result.add(fullList.joinToString(""))
-                }
-            }
-
-        } else {
-            val arrayOrNull = PinyinHelper.toHanyuPinyinStringArray(target[currentIndex])
-            if (arrayOrNull == null) {
-                val arr = fullList.copyOf()
-                arr[currentIndex] = target[currentIndex].toString()
-                val newIndex = currentIndex + 1
-                getNameCapListPinyinAll(arr, newIndex, target, result)
-            } else {
-                val arrayDis = arrayOrNull.map { e -> e.substring(0, e.length - 1) }.distinct()
-                for (item in arrayDis) {
-                    val arr = fullList.copyOf()
-                    arr[currentIndex] = item
-                    val newIndex = currentIndex + 1
-                    getNameCapListPinyinAll(arr, newIndex, target, result)
-                }
-            }
-
-        }
     }
 }

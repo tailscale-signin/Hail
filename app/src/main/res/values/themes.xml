@@ -1,6 +1,8 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
 
-    <style name="Theme.Base" parent="Theme.Material3.DynamicColors.DayNight.NoActionBar">
+    <style name="Theme.Base" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="fontFamily">@font/proxima_nova</item>
+        <item name="android:fontFamily">@font/proxima_nova</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">?isLightTheme</item>
@@ -12,6 +14,14 @@
     </style>
 
     <style name="Theme.Hail" parent="Theme.Base">
+        <item name="textAppearanceTitleLarge">@style/TextAppearance.Hail.TitleLarge</item>
+        <item name="textAppearanceTitleMedium">@style/TextAppearance.Hail.TitleMedium</item>
+        <item name="textAppearanceLabelLarge">@style/TextAppearance.Hail.LabelLarge</item>
+        <item name="textAppearanceLabelMedium">@style/TextAppearance.Hail.LabelMedium</item>
+        <item name="textAppearanceLabelSmall">@style/TextAppearance.Hail.LabelSmall</item>
+        <item name="textAppearanceBodyMedium">@style/TextAppearance.Hail.BodyMedium</item>
+        <item name="textAppearanceBodySmall">@style/TextAppearance.Hail.BodySmall</item>
+        <item name="textAppearanceBodyLarge">@style/TextAppearance.Hail.BodyLarge</item>
         <item name="colorPrimary">@color/md_theme_primary</item>
         <item name="colorOnPrimary">@color/md_theme_onPrimary</item>
         <item name="colorPrimaryContainer">@color/md_theme_primaryContainer</item>
@@ -72,4 +82,36 @@
     <style name="Theme.Hail.AppBarOverlay" parent="ThemeOverlay.Material3.ActionBar"/>
 
     <style name="Theme.Hail.PopupOverlay" parent="ThemeOverlay.Material3"/>
+    <style name="TextAppearance.Hail.TitleLarge" parent="TextAppearance.Material3.TitleLarge">
+        <item name="fontFamily">@font/proxima_nova_bold</item>
+        <item name="android:fontFamily">@font/proxima_nova_bold</item>
+    </style>
+    <style name="TextAppearance.Hail.TitleMedium" parent="TextAppearance.Material3.TitleMedium">
+        <item name="fontFamily">@font/proxima_nova_medium</item>
+        <item name="android:fontFamily">@font/proxima_nova_medium</item>
+    </style>
+    <style name="TextAppearance.Hail.LabelLarge" parent="TextAppearance.Material3.LabelLarge">
+        <item name="fontFamily">@font/proxima_nova_medium</item>
+        <item name="android:fontFamily">@font/proxima_nova_medium</item>
+    </style>
+    <style name="TextAppearance.Hail.LabelMedium" parent="TextAppearance.Material3.LabelMedium">
+        <item name="fontFamily">@font/proxima_nova_medium</item>
+        <item name="android:fontFamily">@font/proxima_nova_medium</item>
+    </style>
+    <style name="TextAppearance.Hail.LabelSmall" parent="TextAppearance.Material3.LabelSmall">
+        <item name="fontFamily">@font/proxima_nova_medium</item>
+        <item name="android:fontFamily">@font/proxima_nova_medium</item>
+    </style>
+    <style name="TextAppearance.Hail.BodyMedium" parent="TextAppearance.Material3.BodyMedium">
+        <item name="fontFamily">@font/proxima_nova_regular</item>
+        <item name="android:fontFamily">@font/proxima_nova_regular</item>
+    </style>
+    <style name="TextAppearance.Hail.BodySmall" parent="TextAppearance.Material3.BodySmall">
+        <item name="fontFamily">@font/proxima_nova_regular</item>
+        <item name="android:fontFamily">@font/proxima_nova_regular</item>
+    </style>
+    <style name="TextAppearance.Hail.BodyLarge" parent="TextAppearance.Material3.BodyLarge">
+        <item name="fontFamily">@font/proxima_nova_regular</item>
+        <item name="android:fontFamily">@font/proxima_nova_regular</item>
+    </style>
 </resources>

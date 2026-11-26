@@ -136,19 +136,7 @@ object HPackages {
         app.packageManager.setApplicationEnabledSetting(packageName, newState, 0)
         val actual = app.packageManager.getApplicationEnabledSetting(packageName)
         trace?.event("readback", packageName, "reader" to "PackageManager", "observedSetting" to actual, "verified" to (actual == newState))
-        if (actual != newState) return false
-        if (disabled && app.checkSelfPermission("android.permission.FORCE_STOP_PACKAGES") == PackageManager.PERMISSION_GRANTED) {
-            val info = getApplicationInfoOrNull(packageName, INSTALLED_FOR_USER)
-            if (info != null && info.flags and ApplicationInfo.FLAG_STOPPED != 0) {
-                trace?.event("force_stop_skipped", packageName, "reason" to "Android already reports the package stopped")
-            } else {
-                val stopped = forceStopApp(packageName, trace)
-                trace?.event("force_stop", packageName, "succeeded" to stopped)
-            }
-        } else if (disabled) {
-            trace?.event("force_stop_skipped", packageName, "reason" to "FORCE_STOP_PACKAGES permission unavailable")
-        }
-        return true
+        return actual == newState
     }
 
     @RequiresApi(Build.VERSION_CODES.P)
