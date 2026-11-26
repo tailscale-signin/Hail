@@ -112,12 +112,13 @@ object HShizuku {
                 installed != null || info.flags and ApplicationInfo.FLAG_INSTALLED != 0, setting(pkg))
         }
 
-        fun installed(): List<ApplicationInfo> {
+        fun applications(includeRetained: Boolean = false): List<ApplicationInfo> {
+            val queryFlags = if (includeRetained) retainedFlags else flags
             val entries = if (HTarget.P) {
-                val slice = HiddenApiBypass.invoke(pm.javaClass, pm, "getInstalledApplications", flags, user)
+                val slice = HiddenApiBypass.invoke(pm.javaClass, pm, "getInstalledApplications", queryFlags, user)
                 HiddenApiBypass.invoke(Class.forName("android.content.pm.BaseParceledListSlice"), slice, "getList")
             } else {
-                val slice = pm.javaClass.getMethod("getInstalledApplications", flagType, Int::class.java).invoke(pm, flags, user)
+                val slice = pm.javaClass.getMethod("getInstalledApplications", flagType, Int::class.java).invoke(pm, queryFlags, user)
                 slice.javaClass.getMethod("getList").invoke(slice)
             }
             return (entries as List<*>).filterIsInstance<ApplicationInfo>()

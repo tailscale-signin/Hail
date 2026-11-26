@@ -80,7 +80,7 @@ class HailApp : Application() {
                 val whitelisted = autoFreezeAfterLock && HailData.checkedList.any { it.whitelisted }
                 val mode = HailData.workingMode
                 val start = candidates.isNotEmpty() && withContext(Dispatchers.IO) {
-                    candidates.any { pkg -> HPackages.getApplicationInfoOrNull(pkg)?.let {
+                    candidates.any { pkg -> HPackages.getApplicationInfoOrNull(pkg, HPackages.INSTALLED_FOR_USER)?.let {
                         (mode.endsWith(HailData.DISABLE) && it.flags and android.content.pm.ApplicationInfo.FLAG_STOPPED == 0) ||
                             !AppManager.isAppFrozen(it, mode)
                     } == true }

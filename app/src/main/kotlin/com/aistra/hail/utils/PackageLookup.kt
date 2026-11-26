@@ -35,7 +35,7 @@ class PackageLookup(private val mode: String, private val trace: DecisionTrace? 
 
     private val serviceInventory by lazy {
         shizuku?.let { service ->
-            runCatching { service.installed() }.onFailure { trace?.error("binder_inventory_failed", null, it) }.getOrNull()
+            runCatching { service.applications() }.onFailure { trace?.error("binder_inventory_failed", null, it) }.getOrNull()
         }
     }
 
@@ -50,7 +50,21 @@ class PackageLookup(private val mode: String, private val trace: DecisionTrace? 
         }
     }
 
-    fun all(): Map<String, UserPackage> = inventory
+    fun all(includeRetainedSystem: Boolean = false): Map<String, UserPackage> {
+        val known = inventory
+        if (!includeRetainedSystem || serviceInventory == null) return known
+        // Some preinstalled packages are visible only to the authorized service. Keep the
+        // installed-only inventory authoritative when the same package is in both queries.
+        val entries = runCatching { shizuku?.applications(includeRetained = true) }
+            .onFailure { trace?.error("retained_inventory_failed", null, it) }.getOrNull() ?: return known
+        return known.toMutableMap().apply {
+            for (info in entries) {
+                if (info.packageName !in this && HPackages.isSystemApp(info)) {
+                    put(info.packageName, UserPackage(info, installed = false))
+                }
+            }
+        }
+    }
 
     /** A complete privileged inventory plus retained metadata can settle absence without probing each package again. */
     fun fromInventory(pkg: String, forChange: Boolean = false): UserPackage? {
@@ -64,15 +78,15 @@ class PackageLookup(private val mode: String, private val trace: DecisionTrace? 
         return record.copy(enabledSetting = setting)
     }
 
-    data class StopChecks(val repaired: Set<String> = emptySet(), val unconfirmed: Set<String> = emptySet(),
+    data class Verification(val repaired: Set<String> = emptySet(), val unconfirmed: Set<String> = emptySet(),
                           val retained: Set<String> = emptySet())
 
     /** Read fresh flags after the write, including when an earlier request already disabled the app. */
-    fun verifyDisabled(packages: Set<String>, retainedSettings: Set<String> = emptySet()): StopChecks {
-        if (packages.isEmpty()) return StopChecks()
+    fun verifyDisabled(packages: Set<String>, retainedSettings: Set<String> = emptySet()): Verification {
+        if (packages.isEmpty()) return Verification()
         val service = shizuku
         val snapshot = if (packages.size < 8) null else runCatching {
-            (service?.installed() ?: HPackages.getInstalledApplications(HPackages.INSTALLED_FOR_USER))
+            (service?.applications() ?: HPackages.getInstalledApplications(HPackages.INSTALLED_FOR_USER))
                 .associateBy { it.packageName }
         }.onFailure { trace?.error("stop_inventory_failed", null, it) }.getOrNull()
 
@@ -115,7 +129,22 @@ class PackageLookup(private val mode: String, private val trace: DecisionTrace? 
             if (!verified) unconfirmed.add(pkg)
             else if (observed == DisableObservation.DISABLED) repaired.add(pkg)
         }
-        return StopChecks(repaired, unconfirmed, confirmedRetained)
+        return Verification(repaired, unconfirmed, confirmedRetained)
+    }
+
+    fun verifyRetainedEnabled(packages: Set<String>): Verification {
+        val retained = mutableSetOf<String>()
+        val unconfirmed = mutableSetOf<String>()
+        for (pkg in packages) {
+            val record = runCatching { shizuku?.find(pkg) }
+                .onFailure { trace?.error("retained_readback_failed", pkg, it) }.getOrNull()
+            val verified = record?.enabledSetting == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            trace?.event("retained_setting_readback", pkg, "installed" to record?.installed,
+                "observedSetting" to record?.enabledSetting, "verified" to verified)
+            if (!verified) unconfirmed.add(pkg)
+            else if (record?.installed == false) retained.add(pkg)
+        }
+        return Verification(unconfirmed = unconfirmed, retained = retained)
     }
 
     internal fun disableObservation(info: ApplicationInfo?) = when {

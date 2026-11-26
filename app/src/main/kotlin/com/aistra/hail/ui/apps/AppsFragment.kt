@@ -22,6 +22,7 @@ import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.HailData
 import com.aistra.hail.databinding.FragmentAppsBinding
 import com.aistra.hail.extensions.*
+import com.aistra.hail.ui.home.PackageStatusDialog
 import com.aistra.hail.ui.main.MainFragment
 import com.aistra.hail.utils.DecisionLog
 import com.aistra.hail.utils.HFiles
@@ -62,8 +63,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
                     withContext(Dispatchers.IO) {
                         FileInputStream(applicationInfo.sourceDir).use { source ->
                             activity.contentResolver.openOutputStream(uri, "rwt").use { target ->
-                                if (target == null) return@withContext
-                                HFiles.copy(source, target)
+                                HFiles.copy(source, requireNotNull(target) { "Could not open the selected document" })
                             }
                         }
                     }
@@ -104,6 +104,10 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
         model.displayApps.observe(viewLifecycleOwner) {
             appsAdapter.submitList(it)
         }
+        childFragmentManager.setFragmentResultListener(PackageStatusDialog.RESULT, viewLifecycleOwner) { _, result ->
+            result.getString(PackageStatusDialog.REMOVE)?.let { HailData.removeCheckedApp(it) }
+            updateAppList()
+        }
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -127,10 +131,10 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
         contextTargetDisabled = if (HailData.workingMode.endsWith(HailData.DISABLE)) !row.frozen else info.enabled
         menu.setHeaderTitle(info.loadLabel(activity.packageManager))
         activity.menuInflater.inflate(R.menu.menu_apps_action, menu)
-        if (HPackages.isSystemApp(info) && row.installed &&
-            info.packageName != app.packageName) {
+        if (HPackages.isSystemApp(info) && info.packageName != app.packageName) {
+            menu.findItem(R.id.action_package_status).isVisible = true
             menu.findItem(R.id.action_system_enabled).apply {
-                isVisible = true
+                isVisible = row.installed
                 setTitle(if (HailData.workingMode.endsWith(HailData.DISABLE)) {
                     if (contextTargetDisabled) R.string.disable_app else R.string.enable_app
                 } else {
@@ -147,6 +151,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
         val pkg = info.packageName
         when (item.itemId) {
             R.id.action_system_enabled -> changeSystemAppEnabled(info)
+            R.id.action_package_status -> PackageStatusDialog.show(childFragmentManager, pkg, source = "apps_status")
             R.id.action_details -> openAppInfo(pkg)
 
             R.id.action_export_clipboard -> {

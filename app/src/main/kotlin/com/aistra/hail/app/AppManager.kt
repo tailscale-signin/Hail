@@ -180,12 +180,17 @@ object AppManager {
                             }
                             succeeded
                         })
-                    val checks = if (frozen && mode.endsWith(HailData.DISABLE)) {
-                        lookup.verifyDisabled(applied.changed + applied.unchanged, retainedSettings)
-                    } else PackageLookup.StopChecks()
+                    val checks = when {
+                        frozen && mode.endsWith(HailData.DISABLE) ->
+                            lookup.verifyDisabled(applied.changed + applied.unchanged, retainedSettings)
+                        retainedSettings.isNotEmpty() ->
+                            lookup.verifyRetainedEnabled(retainedSettings.filterTo(mutableSetOf()) { it in applied.changed || it in applied.unchanged })
+                        else -> PackageLookup.Verification()
+                    }
                     val unconfirmed = checks.unconfirmed
                     val repaired = applied.unchanged.intersect(checks.repaired)
-                    val partialMessage = if (unconfirmed.isEmpty()) null else app.getString(R.string.disable_unconfirmed)
+                    val partialMessage = if (unconfirmed.isEmpty()) null else
+                        app.getString(if (frozen) R.string.disable_unconfirmed else R.string.enable_unconfirmed)
                     for (pkg in unconfirmed) failureReasons[pkg] = requireNotNull(partialMessage)
                     val result = if (unconfirmed.isEmpty() && repaired.isEmpty()) applied else applied.copy(
                         changed = applied.changed - unconfirmed + repaired,
@@ -207,18 +212,11 @@ object AppManager {
                         val androidError = failureReasons[failed]
                         listOfNotNull(disableFailureMessage(failed, mode, info, androidError), androidError).joinToString("\n").ifBlank { null }
                     } else null
-                    val confirmedRetained = if (frozen) checks.retained else retainedSettings.filterTo(linkedSetOf()) { pkg ->
-                        if (pkg !in result.changed && pkg !in result.unchanged) false else
-                            runCatching { lookup.shizuku?.find(pkg) }
-                                .onFailure { trace?.error("retained_readback_failed", pkg, it) }.getOrNull()?.let {
-                                    !it.installed && it.enabledSetting == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                                } == true
-                    }
                     trace?.event("batch_result", null, "changed" to result.changed.size, "unchanged" to result.unchanged.size,
                         "missing" to result.missing.size, "notInstalled" to result.notInstalled.size, "failed" to result.failed.size,
-                        "retainedSettings" to confirmedRetained.size)
+                        "retainedSettings" to checks.retained.size)
                     result.copy(singleLabel = label, failureMessage = failureMessage, failureReasons = failureReasons,
-                        retainedSettings = confirmedRetained)
+                        retainedSettings = checks.retained)
                 }
             }
         } catch (e: CancellationException) {
