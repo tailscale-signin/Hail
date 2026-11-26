@@ -2,13 +2,15 @@ English | [简体中文](README.zh_CN.md) | [日本語](README.ja.md)
 
 # Hail 雹
 
-[![Android CI status](https://github.com/aistra0528/Hail/workflows/Android%20CI/badge.svg)](https://github.com/aistra0528/Hail/actions)
+[![Android CI status](https://github.com/tailscale-signin/Hail/workflows/Android%20CI/badge.svg)](https://github.com/tailscale-signin/Hail/actions)
 [![Translation status](https://hosted.weblate.org/widgets/hail/-/svg-badge.svg)](https://hosted.weblate.org/engage/hail/)
-[![Downloads](https://img.shields.io/github/downloads/aistra0528/Hail/total.svg)](https://github.com/aistra0528/Hail/releases)
+[![Downloads](https://img.shields.io/github/downloads/tailscale-signin/Hail/total.svg)](https://github.com/tailscale-signin/Hail/releases)
 [![License](https://img.shields.io/github/license/aistra0528/Hail)](LICENSE)
 
 Hail is a free-as-in-freedom software to freeze Android
-apps. [GitHub Releases](https://github.com/aistra0528/Hail/releases)
+apps. This repository is the **tailscale-signin fork** of [aistra0528/Hail](https://github.com/aistra0528/Hail).
+Download this fork from its [GitHub Releases](https://github.com/tailscale-signin/Hail/releases).
+The [upstream releases](https://github.com/aistra0528/Hail/releases) and F-Droid package below are separate distributions with their own signing certificates.
 
 [<img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid" height="80">](https://f-droid.org/packages/com.aistra.hail/)
 
@@ -49,6 +51,8 @@ background.
 ### Privacy when disabling an app
 
 For a reversible freeze on an unrooted phone, select **Settings → Working mode → Shizuku — Disable** and authorize Hail in Shizuku. Android records a user disable in the current profile. A root-backed disable can use the full disabled state. After an accepted disable, Hail reads Android’s disabled and stopped flags. When the stop flag is clear, Hail requests a force-stop and checks again. A repeated freeze also checks these flags. **Package status** shows the observed state and offers **Verify stop** when available.
+
+For a retained system package that is not installed in the current profile, **Package status** can change its stored enabled setting through authorized Shizuku, as upstream does. Hail displays that setting separately from installation status. This operation does not reinstall the package. Android can still refuse a transition, including some `DISABLED_UNTIL_USED` transitions under shell-backed Shizuku; Hail reports that refusal.
 
 Android keeps the installed data, accounts and information already sent to a service. Other profiles, privileged system components and previously shared data have separate lifecycles. A force-stop alone can be cleared by launching the app. For hiding and suspension, the selected owner or provider receives the package name and enforces that mode’s Android policy.
 
