@@ -158,7 +158,10 @@ class ReleaseSystemAppsTest {
         when (distribution) {
             "upstream" -> assertEquals("1.11.0", apk.versionName)
             "legacy" -> assertEquals("1.13.2", apk.versionName)
-            "fork" -> assertTrue(apk.longVersionCode == 41L)
+            "fork" -> {
+                assertEquals(requireNotNull(args.getString("releaseVersion")), apk.versionName)
+                assertEquals(requireNotNull(args.getString("releaseCode")).toLong(), apk.longVersionCode)
+            }
             else -> error("Unknown APK $distribution")
         }
         val packages = listOf("com.android.deskclock", listOf("com.android.dreams.basic", "com.android.printspooler")

@@ -186,6 +186,7 @@ for server in shell root; do
         output="$report/parity-$distribution-$server.txt"
         timeout 4m adb shell am instrument -w -r -e class 'com.aistra.hail.ui.apps.ReleaseSystemAppsTest#freezesAndThawsFromHome' \
             -e hailReleaseParity true -e server "$server" -e distribution "$distribution" \
+            -e releaseVersion "$release_version" -e releaseCode "$release_code" \
             com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output"
         adb logcat -d -s Hail:E HailParity:I | tail -n 90 > "$report/backend-$distribution-$server.log"
         grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
