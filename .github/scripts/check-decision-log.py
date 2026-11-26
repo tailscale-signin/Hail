@@ -3,11 +3,12 @@ import json
 import sys
 from pathlib import Path
 
-path, server, expected_version = sys.argv[1:]
+path, server, expected_version, expected_code = sys.argv[1:]
 header, *events = [json.loads(line) for line in Path(path).read_text().splitlines()]
 uid, disabled = (0, 2) if server == "root" else (2000, 3)
 assert header["schema"] == 1 and header["recordingAtExport"] is False
-assert header["version"] == expected_version and header["build"] == 42 and header["sdk"] == 36 and header["writeErrorsThisProcess"] == 0
+assert (header["version"], header["build"]) == (expected_version, int(expected_code)), (header["version"], header["build"])
+assert header["sdk"] == 36 and header["writeErrorsThisProcess"] == 0
 assert len({e["session"] for e in events if e["step"] == "session_started"}) >= 2
 assert events[-1]["step"] == "logging_stopped"
 for session in {e["session"] for e in events}:

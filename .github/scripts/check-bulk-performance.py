@@ -4,13 +4,15 @@ import statistics
 import sys
 from pathlib import Path
 
-report = Path(sys.argv[1])
+directory, release_version, release_code = sys.argv[1:]
+report = Path(directory)
 expected = {f"com.aistra.hail.testfixture.bench{i}" for i in range(1, 13)}
 times = {}
-for build, code in (("baseline", 40), ("current", 42)):
+for build, version, code in (("baseline", "1.13.3", 40), ("current", release_version, int(release_code))):
     rows = [json.loads(line) for line in (report / f"benchmark-{build}.jsonl").read_text().splitlines()]
     header, events = rows[0], rows[1:]
-    assert header["build"] == code and header["writeErrorsThisProcess"] == 0
+    assert (header["version"], header["build"]) == (version, code), (build, header["version"], header["build"])
+    assert header["writeErrorsThisProcess"] == 0
     sessions = {e["session"] for e in events if e["step"] == "session_started" and e["build"] == code}
     operations = {}
     for e in events:
