@@ -79,6 +79,9 @@ object HShizuku {
         private val flagType = if (HTarget.T) Long::class.javaPrimitiveType!! else Int::class.javaPrimitiveType!!
         // Installed for this user, including apps with disabled launcher components.
         private val flags: Any = if (HTarget.T) HPackages.INSTALLED_FOR_USER.toLong() else HPackages.INSTALLED_FOR_USER
+        private val retainedFlags: Any = (HPackages.INSTALLED_FOR_USER or PackageManager.MATCH_UNINSTALLED_PACKAGES).let {
+            if (HTarget.T) it.toLong() else it
+        }
         private val user = HPackages.myUserId
         private val getSetting by lazy { pm.javaClass.getMethod("getApplicationEnabledSetting", String::class.java, Int::class.java) }
         private val setSetting by lazy { pm.javaClass.getMethod(
@@ -92,15 +95,22 @@ object HShizuku {
 
         fun setting(pkg: String) = getSetting.invoke(pm, pkg, user) as Int
 
-        fun application(pkg: String): ApplicationInfo? {
-            val result = if (HTarget.P) HiddenApiBypass.invoke(pm.javaClass, pm, "getApplicationInfo", pkg, flags, user)
+        fun application(pkg: String, includeRetained: Boolean = false): ApplicationInfo? {
+            val queryFlags = if (includeRetained) retainedFlags else flags
+            val result = if (HTarget.P) HiddenApiBypass.invoke(pm.javaClass, pm, "getApplicationInfo", pkg, queryFlags, user)
             else pm.javaClass.getMethod("getApplicationInfo", String::class.java, flagType, Int::class.java)
-                .invoke(pm, pkg, flags, user)
+                .invoke(pm, pkg, queryFlags, user)
             return result as? ApplicationInfo
         }
 
-        fun find(pkg: String): HPackages.UserPackage? =
-            application(pkg)?.let { HPackages.UserPackage(it, true, setting(pkg)) }
+        fun find(pkg: String): HPackages.UserPackage? {
+            val installed = application(pkg)
+            val info = installed ?: application(pkg, includeRetained = true) ?: return null
+            // Like upstream, retained system packages can still have a per-user enabled override.
+            // Reading or changing that override does not install the package for this user.
+            return HPackages.UserPackage(info,
+                installed != null || info.flags and ApplicationInfo.FLAG_INSTALLED != 0, setting(pkg))
+        }
 
         fun installed(): List<ApplicationInfo> {
             val entries = if (HTarget.P) {

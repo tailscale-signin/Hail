@@ -17,6 +17,8 @@ expected = {
     ("SystemAppsTest", "deniedSystemAppChangePreservesEnabledState"),
     ("SystemAppsTest", "retriesOnlyUnappliedPackagesAfterAcknowledgedOrInterruptedBatch"),
     ("SystemAppsTest", "retainedSystemAppShowsProfileStatusAndCanBeRecheckedFromHome"),
+    ("SystemAppsTest", "retainedSystemAppCanStoreShizukuOverrideWithoutReinstalling"),
+    ("SystemAppsTest", "installedDisableVerificationDoesNotRequireRedundantInstalledFlag"),
     ("SystemAppsTest", "installedEvidenceAndRecycledHomeColorsAreIndependentOfRetainedFlags"),
 }
 log = Path(sys.argv[1])

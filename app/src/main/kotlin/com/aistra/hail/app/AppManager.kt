@@ -45,7 +45,9 @@ object AppManager {
 
     fun state(pkg: HPackages.UserPackage?, mode: String = HailData.workingMode, targetSetting: Int? = null,
               trace: DecisionTrace? = null, name: String? = pkg?.info?.packageName): AppInfo.State {
-        if (pkg == null || !pkg.installed) {
+        val retainedOverride = pkg != null && !pkg.installed && mode == HailData.MODE_SHIZUKU_DISABLE &&
+            targetSetting != null && pkg.enabledSetting != null && pkg.info?.let(HPackages::isSystemApp) == true
+        if (pkg == null || (!pkg.installed && !retainedOverride)) {
             trace?.event("package_state", name, "installed" to false, "retainedMetadata" to (pkg != null))
             return if (pkg == null) AppInfo.State.NOT_FOUND else AppInfo.State.NOT_INSTALLED
         }
@@ -60,6 +62,10 @@ object AppManager {
                 })
             // Android can reactivate DISABLED_UNTIL_USED on first use. Either explicit request must reach the backend.
             when {
+                // Retained metadata can be effectively enabled at DEFAULT. Confirm the explicit
+                // stored override, rather than claiming ENABLED without submitting it to Android.
+                retainedOverride && targetSetting == PackageManager.COMPONENT_ENABLED_STATE_ENABLED ->
+                    setting != PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                 setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> {
                     trace?.event("transition", name, "reason" to "Disabled until used is temporary")
                     targetSetting == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
@@ -77,7 +83,8 @@ object AppManager {
                 else -> !pkg.canDisable(setting)
             }
         } else pkg.info?.let { isAppFrozen(it, mode) } == true
-        trace?.event("package_state", name, "installed" to true, "system" to pkg.info?.let(HPackages::isSystemApp),
+        trace?.event("package_state", name, "installed" to pkg.installed, "retainedOverride" to retainedOverride,
+            "system" to pkg.info?.let(HPackages::isSystemApp),
             "flags" to pkg.info?.flags, "enabled" to pkg.info?.enabled, "classifiedFrozen" to frozen)
         return if (frozen) AppInfo.State.FROZEN else AppInfo.State.UNFROZEN
     }
@@ -117,6 +124,7 @@ object AppManager {
                         })
                     val failureReasons = mutableMapOf<String, String>()
                     val singleWrites = mutableSetOf<String>()
+                    val retainedSettings = mutableSetOf<String>()
                     val shellDisable = mode == HailData.MODE_SHIZUKU_DISABLE &&
                         lookup.disableSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
                     fun recordFailure(pkg: String, error: Exception) {
@@ -133,7 +141,13 @@ object AppManager {
                                 (record?.enabledSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED ||
                                     record?.enabledSetting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED)) singleWrites.add(pkg)
                             if (includeLabel) record?.info?.let { infoByPackage[pkg] = it }
-                            state(record, mode, targetSetting, trace, pkg)
+                            state(record, mode, targetSetting, trace, pkg).also { current ->
+                                if (record?.installed == false && !current.unavailable) {
+                                    retainedSettings.add(pkg)
+                                    // Restore upstream's individual call for retained system entries.
+                                    singleWrites.add(pkg)
+                                }
+                            }
                         },
                         trace = trace,
                         apply = { batch ->
@@ -167,7 +181,7 @@ object AppManager {
                             succeeded
                         })
                     val checks = if (frozen && mode.endsWith(HailData.DISABLE)) {
-                        lookup.verifyDisabled(applied.changed + applied.unchanged)
+                        lookup.verifyDisabled(applied.changed + applied.unchanged, retainedSettings)
                     } else PackageLookup.StopChecks()
                     val unconfirmed = checks.unconfirmed
                     val repaired = applied.unchanged.intersect(checks.repaired)
@@ -193,9 +207,18 @@ object AppManager {
                         val androidError = failureReasons[failed]
                         listOfNotNull(disableFailureMessage(failed, mode, info, androidError), androidError).joinToString("\n").ifBlank { null }
                     } else null
+                    val confirmedRetained = if (frozen) checks.retained else retainedSettings.filterTo(linkedSetOf()) { pkg ->
+                        if (pkg !in result.changed && pkg !in result.unchanged) false else
+                            runCatching { lookup.shizuku?.find(pkg) }
+                                .onFailure { trace?.error("retained_readback_failed", pkg, it) }.getOrNull()?.let {
+                                    !it.installed && it.enabledSetting == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                                } == true
+                    }
                     trace?.event("batch_result", null, "changed" to result.changed.size, "unchanged" to result.unchanged.size,
-                        "missing" to result.missing.size, "notInstalled" to result.notInstalled.size, "failed" to result.failed.size)
-                    result.copy(singleLabel = label, failureMessage = failureMessage, failureReasons = failureReasons)
+                        "missing" to result.missing.size, "notInstalled" to result.notInstalled.size, "failed" to result.failed.size,
+                        "retainedSettings" to confirmedRetained.size)
+                    result.copy(singleLabel = label, failureMessage = failureMessage, failureReasons = failureReasons,
+                        retainedSettings = confirmedRetained)
                 }
             }
         } catch (e: CancellationException) {
@@ -235,6 +258,15 @@ object AppManager {
     }
 
     fun resultMessage(result: FreezeResult, frozen: Boolean): String {
+        if (result.retainedSettings.isNotEmpty()) {
+            val storedMessage = app.getString(if (frozen) R.string.retained_disable_confirmed else R.string.retained_enable_confirmed,
+                result.retainedSettings.size)
+            val installedResult = result.copy(changed = result.changed - result.retainedSettings,
+                unchanged = result.unchanged - result.retainedSettings, retainedSettings = emptySet(), singleLabel = null)
+            return if (installedResult.changed.isEmpty() && installedResult.unchanged.isEmpty() &&
+                installedResult.failed.isEmpty() && installedResult.missing.isEmpty() && installedResult.notInstalled.isEmpty()) storedMessage
+            else resultMessage(installedResult, frozen) + "\n" + storedMessage
+        }
         result.failureMessage?.let { return it }
         if (result.notInstalled.isNotEmpty()) {
             return app.getString(if (frozen) R.string.freeze_counts_inactive else R.string.unfreeze_counts_not_installed,
@@ -265,7 +297,7 @@ object AppManager {
         } else {
             trace?.event("launch_policy", pkg, "reason" to "Unfreeze before looking for a launcher activity")
             val result = changeFrozen(listOf(pkg), false, includeLabel = false, mode = mode, trace = trace)
-            if (pkg in result.missing || pkg in result.notInstalled) return null
+            if (pkg in result.missing || pkg in result.notInstalled || pkg in result.retainedSettings) return null
             if (pkg in result.failed) throw IllegalStateException(resultMessage(result, false))
             thawed = pkg in result.changed
         }
