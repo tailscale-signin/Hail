@@ -1,0 +1,138 @@
+name: Publish offline-signed Hail 1.13.6
+'on':
+  push:
+    branches:
+    - release/offline-hail-1.13.6
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: hail-offline-release-1.13.6
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'tailscale-signin/Hail' && github.ref == 'refs/heads/release/offline-hail-1.13.6'
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_SHA: 18c96a6496d63b2cf678538d5b9eebd73d73fc1d
+      VERIFIED_RUN: '45911908821'
+      RELEASE_VERSION: 1.13.6
+      EXPECTED_SIGNER_SHA256: 7a540f2191e3ab467986e728bb280323a1e549ec55f163dd6b81259572fc310e
+      UNSIGNED_SHA256: aa47485acf697eabee802016e80e4bcb53ab12e1d9031f0daf6136d359d2b606
+      SIGNED_SHA256: b693ef65fc54a1838d6274bfce63001a19fa5db43cdbe52d214afe11e9d74010
+      SIGNATURE_PATCH: .github/release-signatures/Hail-v1.13.6.apk.zst
+      PUBLISH_WORKFLOW: .github/workflows/publish-offline-hail.yml
+    steps:
+    - uses: actions/checkout@v7.0.1
+      with:
+        fetch-depth: 2
+    - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+      with:
+        packages: build-tools;36.0.0
+    - name: Verify the tested main artifact and reconstruct the signed APK
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD^)" = "$SOURCE_SHA"
+        test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" = "$SOURCE_SHA"
+        [[ "$(git diff --name-only "$SOURCE_SHA" HEAD | LC_ALL=C sort)" == "$(printf '%s\n' "$SIGNATURE_PATCH" "$PUBLISH_WORKFLOW" | LC_ALL=C sort)" ]]
+        dir="$RUNNER_TEMP/hail-signed"
+        mkdir -p "$dir/input"
+        gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN" > "$dir/run.json"
+        jq -e --arg sha "$SOURCE_SHA" '.head_sha == $sha and .head_branch == "main" and .event == "push" and .path == ".github/workflows/android.yml"' "$dir/run.json" >/dev/null
+        gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN/jobs?filter=latest&per_page=100" > "$dir/jobs.json"
+        jq -e '[.[].jobs[] | select(.name == "verify")] | length == 1 and .[0].conclusion == "success"' "$dir/jobs.json" >/dev/null
+        gh run download "$VERIFIED_RUN" --repo "$GITHUB_REPOSITORY" --name Hail-unsigned-release --dir "$dir/input"
+        name="Hail-v$RELEASE_VERSION.apk"
+        unsigned="$dir/input/$name"
+        echo "$UNSIGNED_SHA256  $unsigned" | sha256sum -c -
+        zstd -q -d --patch-from "$unsigned" "$SIGNATURE_PATCH" -o "$dir/$name"
+        echo "$SIGNED_SHA256  $dir/$name" | sha256sum -c -
+        sdk="$ANDROID_HOME/build-tools/36.0.0"
+        "$sdk/zipalign" -c -P 16 4 "$dir/$name"
+        "$sdk/apksigner" verify --verbose --print-certs "$dir/$name" > "$dir/cert.txt"
+        [[ "$(sed -nE 's/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-f]+)$/\1/p' "$dir/cert.txt")" == "$EXPECTED_SIGNER_SHA256" ]]
+        "$sdk/aapt2" dump badging "$dir/$name" > "$dir/badging.txt"
+        python3 - "$dir/badging.txt" <<'PYVERIFY'
+        import os, re, sys
+        from pathlib import Path
+        package = dict(re.findall(r"(\w+)='([^']*)'", Path(sys.argv[1]).read_text().splitlines()[0]))
+        assert package['name'] == 'com.aistra.hail'
+        assert package['versionName'] == os.environ['RELEASE_VERSION'] and package['versionCode'] == '43'
+        PYVERIFY
+        (cd "$dir" && sha256sum "$name" > "$name.sha256")
+        echo "RELEASE_DIR=$dir" >> "$GITHUB_ENV"
+    - name: Publish the verified assets on the tested main revision
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        version="$RELEASE_VERSION"
+        tag="v$version"
+        filename="Hail-v$version.apk"
+        apk="$RELEASE_DIR/$filename"
+        test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" = "$SOURCE_SHA"
+        # Authenticated lists include drafts; authentication and network failures are fatal.
+        gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RELEASE_DIR/existing-releases.json"
+        if ! jq -e --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | length == 0' \
+          "$RELEASE_DIR/existing-releases.json" >/dev/null; then
+          echo "::error::Release $tag already exists. Inspect it before retrying; drafts and assets are never replaced."
+          exit 1
+        fi
+        if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+          echo "::error::Tag $tag already exists. Publication will not reuse or replace it."
+          exit 1
+        else
+          test "$?" -eq 2
+        fi
+        gh release create "$tag" "$apk" "$apk.sha256" --repo "$GITHUB_REPOSITORY" \
+          --draft --target "$SOURCE_SHA" --title "Hail $version" --notes-file "release-notes/$version.md"
+        # The by-tag REST endpoint cannot resolve an unpublished draft; use its numeric ID.
+        gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RELEASE_DIR/created-releases.json"
+        release_id=$(jq -er --arg tag "$tag" \
+          '[.[][] | select(.tag_name == $tag)] | if length == 1 then .[0].id else error("Expected exactly one release") end' \
+          "$RELEASE_DIR/created-releases.json")
+        [[ "$release_id" =~ ^[0-9]+$ ]]
+        gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > "$RELEASE_DIR/draft.json"
+        python3 - <<'PY'
+        import json, os
+        from pathlib import Path
+        folder = Path(os.environ['RELEASE_DIR'])
+        release = json.loads(folder.joinpath('draft.json').read_text())
+        assert release['draft'] is True
+        assert release['tag_name'] == 'v' + os.environ['RELEASE_VERSION']
+        assert release['target_commitish'] == os.environ['SOURCE_SHA']
+        apk = folder / ('Hail-v' + os.environ['RELEASE_VERSION'] + '.apk')
+        expected = {path.name: path.stat().st_size for path in (apk, Path(str(apk) + '.sha256'))}
+        assert len(release['assets']) == len(expected)
+        assert {item['name']: item['size'] for item in release['assets'] if item['state'] == 'uploaded'} == expected
+        PY
+        downloaded=$(mktemp -d "$RUNNER_TEMP/hail-upload-check.XXXXXX")
+        for item in "$filename" "$filename.sha256"; do
+          asset_id=$(jq -er --arg item "$item" '.assets[] | select(.name == $item) | .id' "$RELEASE_DIR/draft.json")
+          gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "$downloaded/$item"
+        done
+        (cd "$downloaded" && sha256sum --check "$filename.sha256")
+        cmp "$apk" "$downloaded/$filename"
+        cmp "$apk.sha256" "$downloaded/$filename.sha256"
+        test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" = "$SOURCE_SHA"
+        # A draft may have created its tag already. An existing tag must resolve to this commit.
+        if tag_refs=$(git ls-remote --exit-code --tags origin "refs/tags/$tag" "refs/tags/$tag^{}"); then
+          tag_sha=$(printf '%s\n' "$tag_refs" | awk '$2 ~ /\^\{\}$/ {print $1}')
+          if [[ -z "$tag_sha" ]]; then tag_sha=$(printf '%s\n' "$tag_refs" | awk 'NR == 1 {print $1}'); fi
+          test "$tag_sha" = "$SOURCE_SHA"
+        else
+          test "$?" -eq 2
+        fi
+        gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+          -F draft=false -f make_latest=true > "$RELEASE_DIR/published.json"
+        git fetch --no-tags origin "refs/tags/$tag"
+        test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$SOURCE_SHA"
+        python3 - <<'PY'
+        import json, os
+        from pathlib import Path
+        release = json.loads(Path(os.environ['RELEASE_DIR'], 'published.json').read_text())
+        assert release['draft'] is False and release['target_commitish'] == os.environ['SOURCE_SHA']
+        print(release['html_url'])
+        PY
