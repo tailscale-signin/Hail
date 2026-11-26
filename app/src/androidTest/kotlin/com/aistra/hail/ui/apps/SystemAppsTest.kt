@@ -204,6 +204,36 @@ class SystemAppsTest {
         }
     }
 
+    @Test fun storesAnExplicitDisableForAManifestDisabledApp() = withAppFilters(true) {
+        val pkg = "com.aistra.hail.testfixture.dormant"
+        val info = requireNotNull(HPackages.getApplicationInfoOrNull(pkg, HPackages.INSTALLED_FOR_USER))
+        val saved = HailData.checkedList.toList()
+        assertFalse(info.enabled)
+        assertEquals(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, pm.getApplicationEnabledSetting(pkg))
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                selectShizukuDisable()
+                scenario.onActivity { HailData.checkedList.clear(); HailData.checkedList.add(AppInfo(pkg)) }
+                await(By.res(ctx.packageName, "nav_home")).click()
+                await(By.res(ctx.packageName, "app_name").textContains(info.loadLabel(pm).toString())).longClick()
+                await(text(R.string.package_status_controls)).click()
+                await(By.res(ctx.packageName, "report").textContains(ctx.getString(R.string.package_manifest_disabled)))
+                assertTrue(await(By.res(ctx.packageName, "enable_instead")).isEnabled)
+                await(text(R.string.apply_explicit_disable)).click()
+                waitFor("Android stored the explicit disable over the manifest default") {
+                    pm.getApplicationEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+                }
+                await(By.res(ctx.packageName, "package_action").text(ctx.getString(R.string.enable_app)).enabled(true)).click()
+                waitFor("Android enabled the manifest-disabled app") {
+                    pm.getApplicationEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                }
+            }
+        } finally {
+            shell("pm default-state --user ${HPackages.myUserId} $pkg")
+            instrumentation.runOnMainSync { HailData.checkedList.clear(); HailData.checkedList.addAll(saved) }
+        }
+    }
+
     @Suppress("unused", "UNUSED_PARAMETER")
     class PartialPackageManager(private val throwAfterDelivery: Boolean) {
         val states = mutableMapOf("applied" to 3, "retry" to 3, "refused" to 3)

@@ -231,6 +231,8 @@
     <string name="disable_confirmed">Android reports this app disabled and stopped in this profile.</string>
     <string name="disable_unconfirmed">Hail could not confirm that this app is both disabled and stopped in this profile.</string>
     <string name="enable_unconfirmed">Android did not confirm the enabled setting for this profile. Check the app status again.</string>
+    <string name="package_manifest_disabled">This app is disabled by its manifest. Android has no explicit enabled setting for this profile.</string>
+    <string name="apply_explicit_disable">Apply explicit disable</string>
     <string name="verify_stop">Verify stop</string>
     <string name="privacy_disable">Disable checks Android’s disabled and stopped flags for this profile. The app keeps its stored data.</string>
     <string name="privacy_hide">Hide makes the app unavailable in this profile and keeps its stored data.</string>

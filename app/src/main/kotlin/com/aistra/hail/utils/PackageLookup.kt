@@ -142,7 +142,7 @@ class PackageLookup(private val mode: String, private val trace: DecisionTrace? 
             trace?.event("retained_setting_readback", pkg, "installed" to record?.installed,
                 "observedSetting" to record?.enabledSetting, "verified" to verified)
             if (!verified) unconfirmed.add(pkg)
-            else if (record?.installed == false) retained.add(pkg)
+            else if (!record.installed) retained.add(pkg)
         }
         return Verification(unconfirmed = unconfirmed, retained = retained)
     }

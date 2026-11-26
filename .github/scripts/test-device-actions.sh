@@ -37,11 +37,11 @@ adb shell -T 'run-as com.aistra.hail.debug sh -c "cat > files/v1/tags.json"' <<'
 [{"tag":"Default","id":0},{"tag":"Legacy","id":-91}]
 JSON
 install_fixture() {
-    local name="$1"
+    local name="$1" enabled="${2:-true}"
     cat > "$fixture_dir/AndroidManifest.xml" <<XML
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.aistra.hail.testfixture.$name" android:versionCode="1" android:versionName="1">
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="36" />
-    <application android:hasCode="false" android:label="Hail fixture $name">
+    <application android:hasCode="false" android:label="Hail fixture $name" android:enabled="$enabled">
         <activity android:name="android.app.Activity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -56,6 +56,7 @@ XML
     adb install --no-incremental --no-streaming -r "$fixture_dir/$name.apk"
 }
 for name in one two; do install_fixture "$name"; done
+install_fixture dormant false
 # Exercise the same shell-backed Shizuku release and consent screen used on an unrooted phone.
 shizuku_apk="$fixture_dir/shizuku.apk"
 curl --fail --location --silent --show-error --retry 3 -o "$shizuku_apk" \

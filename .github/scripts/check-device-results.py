@@ -14,6 +14,7 @@ expected = {
     ("BulkShortcutLauncherTest", "dismissRetryApproveAndRepeatFromSettings"),
     ("SystemAppsTest", "idleModeOpensAndroidSettingsForTheSelectedSystemApp"),
     ("SystemAppsTest", "disablesAndEnablesAPreinstalledAppWithShizukuPermission"),
+    ("SystemAppsTest", "storesAnExplicitDisableForAManifestDisabledApp"),
     ("SystemAppsTest", "deniedSystemAppChangePreservesEnabledState"),
     ("SystemAppsTest", "retriesOnlyUnappliedPackagesAfterAcknowledgedOrInterruptedBatch"),
     ("SystemAppsTest", "retainedSystemAppShowsProfileStatusAndCanBeRecheckedFromHome"),
