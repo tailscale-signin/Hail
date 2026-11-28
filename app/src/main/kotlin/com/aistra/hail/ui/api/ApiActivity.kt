@@ -22,7 +22,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Launch
 import androidx.compose.material.icons.rounded.AcUnit
@@ -40,6 +44,7 @@ import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.HailApi
 import com.aistra.hail.app.HailData
 import com.aistra.hail.ui.theme.AppTheme
+import com.aistra.hail.ui.failureDetails
 import com.aistra.hail.utils.*
 import com.aistra.hail.work.HWork.setAutoFreeze
 
@@ -51,6 +56,7 @@ open class ApiActivity : FragmentActivity() {
     private var requestSource = "api"
     private var actionJob: Job? = null
     private var lastRequest = 0L
+    private var partialFailure: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         window.protectContent()
@@ -74,6 +80,7 @@ open class ApiActivity : FragmentActivity() {
             else -> request.getStringExtra(HailApi.EXTRA_ORIGIN) ?: "hail"
         }
         try {
+            partialFailure = null
             setContent { }
             val action = HailApi.parse(request)
             setIntent(action)
@@ -112,7 +119,7 @@ open class ApiActivity : FragmentActivity() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (number == lastRequest) setErrorDialog(e)
+                if (number == lastRequest) setErrorContent(e)
             }
         }
     }
@@ -144,10 +151,14 @@ open class ApiActivity : FragmentActivity() {
             HailApi.ACTION_LOCK_FREEZE -> lockScreen(true)
             else -> throw IllegalArgumentException("Unknown action:\n$action")
         }
+        partialFailure?.let {
+            setErrorContent(IllegalStateException(it))
+            return false
+        }
         return true
     }
 
-    private fun setErrorDialog(t: Throwable) = setContent { AppTheme { ErrorDialog(t) } }
+    private fun setErrorContent(t: Throwable) = setContent { AppTheme { ErrorContent(t) } }
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
@@ -193,14 +204,19 @@ open class ApiActivity : FragmentActivity() {
     }
 
     @Composable
-    private fun ErrorDialog(t: Throwable) = AlertDialog(
-        text = { Text(text = t.message ?: t.stackTraceToString()) },
-        onDismissRequest = ::finish,
-        confirmButton = {
-            TextButton(onClick = ::finish) {
-                Text(text = stringResource(android.R.string.ok))
+    private fun ErrorContent(t: Throwable) {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.safeDrawingPadding().verticalScroll(rememberScrollState())
+                .padding(dimensionResource(R.dimen.padding_large))) {
+                Text(text = stringResource(R.string.action_needs_attention), style = MaterialTheme.typography.titleLarge)
+                Text(text = t.message ?: t.javaClass.simpleName,
+                    modifier = Modifier.padding(vertical = dimensionResource(R.dimen.padding_medium)))
+                TextButton(onClick = ::finish) {
+                    Text(text = stringResource(R.string.dismiss_action_feedback))
+                }
             }
-        })
+        }
+    }
 
     private fun requirePackage(): String = requireNotNull(intent.getStringExtra(HailData.KEY_PACKAGE))
 
@@ -237,8 +253,7 @@ open class ApiActivity : FragmentActivity() {
         }
         val result = AppManager.changeFrozen(listOf(pkg), frozen, trace = trace)
         if (pkg in result.missing || (!frozen && pkg in result.notInstalled)) throw NameNotFoundException(getString(R.string.app_not_installed))
-        if (!result.reachedTarget(pkg, frozen)) throw IllegalStateException(AppManager.resultMessage(result, frozen))
-        HUI.showToast(AppManager.resultMessage(result, frozen))
+        if (!result.reachedTarget(pkg, frozen)) throw IllegalStateException(result.failureDetails(frozen) ?: AppManager.resultMessage(result, frozen))
     }
 
     private suspend fun setListFrozen(
@@ -257,9 +272,11 @@ open class ApiActivity : FragmentActivity() {
             }
         }
         val result = AppManager.changeFrozen(packages, frozen, trace = trace)
-        val message = AppManager.resultMessage(result, frozen)
-        if (result.failed.isNotEmpty() && result.changed.isEmpty()) throw IllegalStateException(message)
-        HUI.showToast(message)
+        result.failureDetails(frozen)?.let {
+            if (result.failed.isNotEmpty() && result.changed.isEmpty()) throw IllegalStateException(it)
+            // A partially failed tag action must not prevent the requested launch or screen lock.
+            partialFailure = listOfNotNull(partialFailure, it).joinToString("\n\n")
+        }
     }
 
     private suspend fun lockScreen(freezeAll: Boolean) {

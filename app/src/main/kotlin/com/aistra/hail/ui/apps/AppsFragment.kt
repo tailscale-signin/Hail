@@ -23,7 +23,9 @@ import com.aistra.hail.app.HailData
 import com.aistra.hail.databinding.FragmentAppsBinding
 import com.aistra.hail.extensions.*
 import com.aistra.hail.ui.home.PackageStatusDialog
+import com.aistra.hail.ui.failureDetails
 import com.aistra.hail.ui.main.MainFragment
+import com.aistra.hail.ui.showActionFeedback
 import com.aistra.hail.utils.DecisionLog
 import com.aistra.hail.utils.HFiles
 import com.aistra.hail.utils.HPackages
@@ -57,8 +59,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             if (exportApkPkg == null || uri == null) return@registerForActivityResult
             lifecycleScope.launch {
                 val applicationInfo = HPackages.getApplicationInfoOrNull(exportApkPkg) ?: return@launch
-                val dialog =
-                    PrivateDialogBuilder(activity).setView(R.layout.dialog_progress).setCancelable(false).show()
+                _binding?.root?.showActionFeedback(null)
                 runCatching {
                     withContext(Dispatchers.IO) {
                         FileInputStream(applicationInfo.sourceDir).use { source ->
@@ -67,12 +68,10 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
                             }
                         }
                     }
-                }.onSuccess {
-                    HUI.showToast(R.string.msg_extract_apk, uri.toString())
                 }.onFailure {
-                    HUI.showToast(R.string.operation_failed, it.localizedMessage ?: "Unknown", true)
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    _binding?.root?.showActionFeedback(getString(R.string.operation_failed, it.localizedMessage ?: "Unknown"))
                 }
-                dialog.dismiss()
             }
         }
 
@@ -156,14 +155,13 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
 
             R.id.action_export_clipboard -> {
                 HUI.copyText(pkg)
-                HUI.showToast(R.string.msg_text_copied, pkg)
             }
 
             R.id.action_extract_apk -> extractApk(pkg)
             R.id.action_uninstall -> uninstallApp(name, pkg)
             R.id.action_reinstall -> {
                 if (AppManager.reinstallApp(pkg)) updateAppList()
-                else HUI.showToast(R.string.operation_failed, name)
+                else binding.root.showActionFeedback(getString(R.string.operation_failed, name))
             }
 
             else -> return super.onContextItemSelected(item)
@@ -173,7 +171,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
 
     private fun openAppInfo(pkg: String) {
         if (!HUI.startActivity(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, HPackages.packageUri(pkg))) {
-            HUI.showToast(R.string.app_info_unavailable)
+            binding.root.showActionFeedback(getString(R.string.app_info_unavailable))
         }
     }
 
@@ -189,16 +187,9 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
         }
         // The action was labelled from this snapshot. Repeating it must never reverse a newer change.
         viewLifecycleOwner.lifecycleScope.launch {
+            binding.root.showActionFeedback(null)
             val result = AppManager.changeFrozen(listOf(pkg), disable, mode = mode, trace = trace)
-            when {
-                result.reachedTarget(pkg, disable) -> HUI.showToast(AppManager.resultMessage(result, disable))
-                pkg in result.missing || pkg in result.notInstalled -> HUI.showToast(R.string.app_not_installed)
-                isResumed -> PrivateDialogBuilder(requireContext())
-                    .setTitle(info.loadLabel(app.packageManager))
-                    .setMessage(AppManager.resultMessage(result, disable))
-                    .setPositiveButton(R.string.action_details) { _, _ -> openAppInfo(pkg) }
-                    .setNegativeButton(android.R.string.cancel, null).show()
-            }
+            binding.root.showActionFeedback(result.failureDetails(disable))
             if (result.changed.isEmpty()) updateAppList()
         }
     }
@@ -210,7 +201,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
 
     private fun uninstallApp(name: CharSequence, pkg: String) {
         when {
-            HPackages.isAppUninstalled(pkg) -> HUI.showToast(R.string.app_not_installed)
+            HPackages.isAppUninstalled(pkg) -> binding.root.showActionFeedback(getString(R.string.app_not_installed))
 
             pkg == app.packageName -> {
                 when {
@@ -284,11 +275,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             R.id.sort_by_install -> changeAppsSort(HailData.SORT_INSTALL, item)
             R.id.sort_by_update -> changeAppsSort(HailData.SORT_UPDATE, item)
             R.id.filter_user_apps -> changeAppsFilter(HailData.FILTER_USER_APPS, item)
-            R.id.filter_system_apps -> PrivateDialogBuilder(activity)
-                .setMessage(getString(R.string.system_app_controls) + "\n\n" + getString(R.string.freeze_system_app))
-                .setPositiveButton(R.string.action_continue) { _, _ ->
-                    changeAppsFilter(HailData.FILTER_SYSTEM_APPS, item)
-                }.setNegativeButton(android.R.string.cancel, null).show()
+            R.id.filter_system_apps -> changeAppsFilter(HailData.FILTER_SYSTEM_APPS, item)
 
             R.id.filter_frozen_apps -> changeAppsFilter(HailData.FILTER_FROZEN_APPS, item)
             R.id.filter_unfrozen_apps -> changeAppsFilter(HailData.FILTER_UNFROZEN_APPS, item)

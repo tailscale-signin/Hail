@@ -8,8 +8,11 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import androidx.core.view.isVisible
+import androidx.core.content.ContextCompat
 import com.aistra.hail.app.AppInfo
+import com.aistra.hail.app.AppRisk
 import com.aistra.hail.databinding.ItemHomeBinding
+import com.aistra.hail.ui.apps.AppRiskPresentation
 import com.aistra.hail.utils.AppIconCache
 import com.aistra.hail.utils.HPackages.myUserId
 import com.google.android.material.color.MaterialColors
@@ -17,7 +20,8 @@ import kotlinx.coroutines.Job
 
 data class HomeRow(val info: AppInfo, val application: ApplicationInfo?, val label: String,
                    val state: AppInfo.State, val pinned: Boolean, val whitelisted: Boolean,
-                   val selected: Boolean, val grayscale: Boolean, val fontSize: Float)
+                   val selected: Boolean, val grayscale: Boolean, val fontSize: Float,
+                   val risk: AppRisk = AppRisk())
 
 class PagerAdapter : ListAdapter<HomeRow, PagerAdapter.ViewHolder>(object : DiffUtil.ItemCallback<HomeRow>() {
     override fun areItemsTheSame(oldItem: HomeRow, newItem: HomeRow) = oldItem.info == newItem.info
@@ -48,17 +52,22 @@ class PagerAdapter : ListAdapter<HomeRow, PagerAdapter.ViewHolder>(object : Diff
                 appIcon.colorFilter = null
             }
             appName.text = buildString {
+                if (row.selected) append("✓ ")
                 if (!row.grayscale && dim) append("❄️")
                 if (row.whitelisted) append("🔒")
                 append(row.label)
             }
-            appName.isEnabled = !row.grayscale || !dim
+            val riskColor = AppRiskPresentation.nameColor(row.risk)
+            appName.isEnabled = riskColor != null || !row.grayscale || !dim
             appName.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
             val unavailable = row.state == AppInfo.State.NOT_FOUND
-            appAvailability.isVisible = row.state.unavailable
-            appAvailability.setText(if (row.state == AppInfo.State.NOT_INSTALLED)
-                com.aistra.hail.R.string.package_inactive_here else com.aistra.hail.R.string.package_unavailable)
-            if (row.selected || unavailable) {
+            appAvailability.isVisible = unavailable
+            appAvailability.setText(com.aistra.hail.R.string.package_unavailable)
+            // The selected check mark keeps selection visible without hiding yellow/red safety information.
+            root.isSelected = row.selected
+            if (riskColor != null) {
+                appName.setTextColor(ContextCompat.getColor(ctx, riskColor))
+            } else if (row.selected || unavailable) {
                 appName.setTextColor(MaterialColors.getColor(appName, if (row.selected)
                     androidx.appcompat.R.attr.colorPrimary else com.google.android.material.R.attr.colorOnErrorContainer))
             } else appName.setTextColor(holder.nameColors)

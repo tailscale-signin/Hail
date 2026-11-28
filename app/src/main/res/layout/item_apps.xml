@@ -18,6 +18,8 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
             android:orientation="vertical">
 
         <com.google.android.material.textview.MaterialTextView
@@ -37,6 +39,30 @@
                 android:maxLines="2"
                 android:textAppearance="@style/TextAppearance.Hail.BodySmall"
                 tools:text="com.aistra.hail"/>
+
+        <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/app_risk"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textStyle="bold"
+                android:textAppearance="@style/TextAppearance.Hail.LabelSmall"
+                tools:text="Unsafe · Essential app"/>
+
+        <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/app_risk_reason"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="2dp"
+                android:paddingBottom="4dp"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:clickable="true"
+                android:focusable="true"
+                android:textAppearance="@style/TextAppearance.Hail.BodySmall"
+                tools:text="Core Android component. Disabling can break system functions or prevent startup."/>
     </LinearLayout>
 
     <com.google.android.material.checkbox.MaterialCheckBox

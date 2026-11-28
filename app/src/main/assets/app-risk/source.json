@@ -1,0 +1,14 @@
+{
+  "source": "https://raw.githubusercontent.com/Universal-Debloater-Alliance/universal-android-debloater-next-generation/61fda8ba7b07aff0fb1351e705455ae3961fb868/resources/assets/uad_lists.json",
+  "commit": "61fda8ba7b07aff0fb1351e705455ae3961fb868",
+  "sha256": "69e3e7f33a64f165217a58bb426aada13385f5427a5123e34d31041416f593a6",
+  "packages": 5399,
+  "categories": {
+    "Advanced": 1160,
+    "Expert": 923,
+    "Recommended": 3018,
+    "Unsafe": 298
+  },
+  "license": "GPL-3.0",
+  "transform": "Unmodified upstream JSON, compressed with gzip; no ratings inferred or removed."
+}

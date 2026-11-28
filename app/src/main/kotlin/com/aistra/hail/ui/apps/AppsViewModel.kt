@@ -9,19 +9,22 @@ import androidx.lifecycle.viewModelScope
 import com.aistra.hail.HailApp
 import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.AppInfo
+import com.aistra.hail.app.AppRisk
 import com.aistra.hail.app.HailData
 import com.aistra.hail.utils.*
 import java.text.Collator
 import kotlinx.coroutines.*
 
 data class InstalledRow(val info: ApplicationInfo, val label: String, val frozen: Boolean, val installed: Boolean,
-                        val checked: Boolean, val grayscale: Boolean, val sortTime: Long)
+                        val checked: Boolean, val grayscale: Boolean, val sortTime: Long,
+                        val risk: AppRisk = AppRisk())
 
 class AppsViewModel(application: Application) : AndroidViewModel(application) {
     val isRefreshing = MutableLiveData(false)
     val displayApps = MutableLiveData<List<InstalledRow>>()
     // Entries live for a single package refresh. Searching and sorting reuse the Android metadata.
-    private class Entry(val record: HPackages.UserPackage, val info: ApplicationInfo, pm: PackageManager) {
+    private class Entry(val record: HPackages.UserPackage, val info: ApplicationInfo, pm: PackageManager,
+                        val risk: AppRisk) {
         val label by lazy { info.loadLabel(pm).toString() }
         val packageInfo by lazy { HPackages.getUnhiddenPackageInfoOrNull(info.packageName) }
     }
@@ -56,8 +59,9 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
         loadJob = viewModelScope.launch {
             val pm = getApplication<HailApp>().packageManager
             applications = withContext(Dispatchers.IO) {
+                val risks = AppRisks.snapshot(getApplication<HailApp>())
                 PackageLookup(HailData.workingMode).all(includeRetainedSystem = true).values.mapNotNull { record ->
-                    record.info?.let { Entry(record, it, pm) }
+                    record.info?.let { Entry(record, it, pm, risks.classify(it)) }
                 }
             }
             updateDisplayAppList()
@@ -96,7 +100,7 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
                         else -> null
                     }
                     InstalledRow(info, label, frozen, record.installed,
-                        false, gray, timestamp ?: 0)
+                        false, gray, timestamp ?: 0, entry.risk)
                 }
                 when (sort) {
                     HailData.SORT_INSTALL -> rows.sortedBy { it.sortTime }

@@ -72,7 +72,8 @@ class PackageStatusDialog : DialogFragment() {
             try {
                 startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null)))
             } catch (_: android.content.ActivityNotFoundException) {
-                HUI.showToast(R.string.app_info_unavailable)
+                message = getString(R.string.app_info_unavailable)
+                refresh()
             }
         }
         alert.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener { HUI.copyText(binding.report.text.toString()) }

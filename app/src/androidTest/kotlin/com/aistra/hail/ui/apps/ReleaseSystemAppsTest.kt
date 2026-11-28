@@ -60,7 +60,7 @@ class ReleaseSystemAppsTest {
         finally { host.uiAutomation.dropShellPermissionIdentity() }
     }
 
-    private fun configure(packages: List<String>, systemApps: Boolean = true) {
+    private fun configure(packages: List<String>, systemApps: Boolean = true, legacyFilterPrompt: Boolean = true) {
         await(res("nav_settings")).click()
         await(text(R.string.working_mode)).click()
         await(text(R.string.mode_shizuku_disable)).click()
@@ -71,7 +71,7 @@ class ReleaseSystemAppsTest {
         if (systemApps) {
             menu(R.string.filter_by, "action_apps_filter")
             await(text(R.string.filter_system_apps)).click()
-            await(text(R.string.action_continue)).click()
+            if (legacyFilterPrompt) await(text(R.string.action_continue)).click()
         }
         menu(R.string.action_search, "action_search")
         for (pkg in packages) {
@@ -177,7 +177,7 @@ class ReleaseSystemAppsTest {
             if (upgrade) packages.forEach { expectSetting(it, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) }
             else packages.forEach { setFixture(it, enabled) }
             context.startActivity(requireNotNull(pm.getLaunchIntentForPackage(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            if (!upgrade) configure(packages)
+            if (!upgrade) configure(packages, legacyFilterPrompt = !fork)
             if (fork) {
                 await(res("nav_settings")).click()
                 settingsItem(R.string.debug_logging)
@@ -230,9 +230,10 @@ class ReleaseSystemAppsTest {
                 menu(R.string.action_freeze_all, "action_freeze_all")
                 expectSetting(packages.first(), disableState)
                 if (root) expectSetting(pkg, disableState) else {
-                    await(By.text(Pattern.compile("(?s).*Shell cannot change component state.*")))
+                    await(res("action_feedback_message").textContains("Shell cannot change component state"))
                     expectSetting(pkg, PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED)
-                    await(text(android.R.string.ok)).click()
+                    assertFalse("Freeze failures remain inline", device.hasObject(By.res("android", "button1")))
+                    await(res("dismiss_action_feedback")).click()
                 }
                 exportLog(if (root) "root" else "shell")
             }

@@ -7,6 +7,7 @@ import com.aistra.hail.R
 object HailApi {
     const val EXTRA_ORIGIN = "com.aistra.hail.action_origin"
     const val SHORTCUT = "launcher_shortcut"
+    const val WIDGET = "home_widget"
     const val TILE = "quick_settings_tile"
     const val NOTIFICATION = "notification"
 
@@ -71,6 +72,9 @@ object HailApi {
 
     /** The confirmation and the privileged operation share this immutable request snapshot. */
     fun parse(request: Intent): Intent {
+        // A mutable collection template permits a package fill-in only, never bulk tag actions.
+        val widget = request.getStringExtra(EXTRA_ORIGIN) == WIDGET
+        if (widget) require(request.action == ACTION_LAUNCH) { "Invalid widget action" }
         val link = request.action == Intent.ACTION_VIEW
         val action = if (link) {
             val uri = requireNotNull(request.data)
@@ -86,7 +90,7 @@ object HailApi {
                 require(!pkg.isNullOrEmpty() && pkg.length <= 255 && packageNamePattern.matches(pkg)) { "Invalid package name" }
                 putExtra(HailData.KEY_PACKAGE, pkg)
             }
-            if (action == ACTION_LAUNCH || action == ACTION_FREEZE_TAG || action == ACTION_UNFREEZE_TAG) {
+            if (!widget && (action == ACTION_LAUNCH || action == ACTION_FREEZE_TAG || action == ACTION_UNFREEZE_TAG)) {
                 val tag = argument(HailData.KEY_TAG)
                 if (action != ACTION_LAUNCH) requireNotNull(tag) { "Missing tag" }
                 if (tag != null) putExtra(HailData.KEY_TAG, tag)

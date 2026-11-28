@@ -143,7 +143,8 @@ object HailData {
     val workingMode get() = sp.getString(WORKING_MODE, MODE_DEFAULT)!!
     val recentShortcuts get() = sp.getBoolean(RECENT_SHORTCUTS, false)
     val biometricLogin get() = sp.getBoolean(BIOMETRIC_LOGIN, false)
-    val appTheme get() = sp.getString(APP_THEME, THEME_DARK)!!
+    // Keep startup and launcher-hosted resources dark even when restoring an older light preference.
+    val appTheme get() = THEME_DARK
     val iconPack get() = sp.getString(ICON_PACK, ACTION_NONE)!!
     val grayscaleIcon get() = sp.getBoolean(GRAYSCALE_ICON, true)
     val compactIcon get() = sp.getBoolean(COMPACT_ICON, false)
