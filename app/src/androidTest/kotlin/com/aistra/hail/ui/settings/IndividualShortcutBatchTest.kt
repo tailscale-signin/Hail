@@ -1,10 +1,12 @@
 package com.aistra.hail.ui.settings
 
+import android.Manifest
 import android.app.UiAutomation
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.ShortcutManager
 import android.graphics.Rect
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.accessibility.AccessibilityNodeInfo
@@ -47,7 +49,7 @@ import java.util.regex.Pattern
 
 /** Real Launcher3 pinning. Secure-setting changes are confined to the explicit CI emulator fixture. */
 @RunWith(AndroidJUnit4::class)
-@SdkSuppress(minSdkVersion = 26)
+@SdkSuppress(minSdkVersion = 29)
 class IndividualShortcutBatchTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
@@ -227,21 +229,35 @@ class IndividualShortcutBatchTest {
         UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES))
 
     private fun setAssistantEnabled(enabled: Boolean) {
-        val services = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-            .orEmpty().split(':').filter { it.isNotBlank() && ComponentName.unflattenFromString(it) != assistant }.toMutableList()
-        if (enabled) services += assistant.flattenToString()
-        restoreSecure(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, services.joinToString(":"))
-        restoreSecure(Settings.Secure.ACCESSIBILITY_ENABLED, if (services.isEmpty()) "0" else "1")
-        waitFor(15_000) {
-            ShortcutPinAccessibilityService.isEnabled(context) == enabled &&
-                ShortcutPinAccessibilityService.isConnected() == enabled
+        try {
+            val services = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+                .orEmpty().split(':').filter { it.isNotBlank() && ComponentName.unflattenFromString(it) != assistant }.toMutableList()
+            if (enabled) services += assistant.flattenToString()
+            restoreSecure(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, services.joinToString(":"))
+            restoreSecure(Settings.Secure.ACCESSIBILITY_ENABLED, if (services.isEmpty()) "0" else "1")
+            waitFor(15_000) {
+                ShortcutPinAccessibilityService.isEnabled(context) == enabled &&
+                    ShortcutPinAccessibilityService.isConnected() == enabled
+            }
+        } catch (failure: Throwable) {
+            captureFailure("Assistant fixture setup failed; requestedEnabled=$enabled; $failure")
+            throw failure
         }
     }
 
     private fun restoreSecure(key: String, value: String?) {
-        val command = if (value == null) "settings delete secure $key"
-            else "settings put secure $key '${value.replace("'", "'\\''")}'"
-        device.executeShellCommand(command)
+        // UiAutomation.executeShellCommand uses Runtime.exec, not a shell: quotes become
+        // literal setting data. Direct writes also preserve null and empty original values.
+        val uiAutomation = automation()
+        uiAutomation.adoptShellPermissionIdentity(Manifest.permission.WRITE_SECURE_SETTINGS)
+        try {
+            assertTrue("Could not write secure fixture setting $key",
+                Settings.Secure.putString(context.contentResolver, key, value))
+            assertEquals("Secure fixture setting must match exactly: $key", value,
+                Settings.Secure.getString(context.contentResolver, key))
+        } finally {
+            uiAutomation.dropShellPermissionIdentity()
+        }
     }
 
     private fun pinnedIds() = manager.pinnedShortcuts.mapTo(mutableSetOf()) { it.id }
@@ -338,15 +354,35 @@ class IndividualShortcutBatchTest {
 
     private fun verificationFolder(): File? = context.getExternalFilesDir("verification")?.also { it.mkdirs() }
 
-    private fun captureFailure() {
+    private fun captureFailure(reason: String? = null) {
         // Read-only evidence is captured before teardown restores services and dismisses the launcher screen.
-        runCatching {
-            verificationFolder()?.let { folder ->
-                device.dumpWindowHierarchy(File(folder, "individual-shortcut-failure.xml"))
-                device.takeScreenshot(File(folder, "individual-shortcut-failure.png"))
-                File(folder, "individual-shortcut-failure.txt").writeText(
-                    "${ShortcutBatchController.state.value}\npinned=${pinnedIds()}\n")
+        val summary = buildString {
+            appendLine(reason ?: "Shortcut batch verification failed")
+            appendLine("batch=${ShortcutBatchController.state.value}")
+            appendLine("pinned=${runCatching { pinnedIds() }}")
+            appendLine("assistantComponent=${assistant.flattenToString()}")
+            appendLine("assistantEnabled=${runCatching { ShortcutPinAccessibilityService.isEnabled(context) }}")
+            appendLine("assistantConnected=${runCatching { ShortcutPinAccessibilityService.isConnected() }}")
+            appendLine("uiAutomationFlags=${Configurator.getInstance().uiAutomationFlags}")
+            for (key in listOf(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, Settings.Secure.ACCESSIBILITY_ENABLED)) {
+                appendLine("$key=${runCatching { Settings.Secure.getString(context.contentResolver, key) }}")
             }
         }
+        android.util.Log.e("IndividualShortcutBatchTest", summary)
+        val folder = runCatching { verificationFolder() }.getOrNull() ?: return
+        runCatching { File(folder, "individual-shortcut-failure.txt").writeText(summary) }
+        runCatching {
+            File(folder, "individual-shortcut-accessibility.txt").writeText(readShell("dumpsys accessibility"))
+        }
+        runCatching {
+            val relevant = Regex("accessibility|uiautomation|AndroidRuntime|com\\.aistra\\.hail|Shortcut", RegexOption.IGNORE_CASE)
+            File(folder, "individual-shortcut-accessibility-logcat.txt").writeText(
+                readShell("logcat -d -t 2000").lineSequence().filter { relevant.containsMatchIn(it) }.joinToString("\n"))
+        }
+        runCatching { device.dumpWindowHierarchy(File(folder, "individual-shortcut-failure.xml")) }
+        runCatching { device.takeScreenshot(File(folder, "individual-shortcut-failure.png")) }
     }
+
+    private fun readShell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
+        automation().executeShellCommand(command)).bufferedReader().use { it.readText() }
 }
