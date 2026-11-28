@@ -224,6 +224,7 @@
     <string name="debug_export_saved">Debug log saved</string>
     <string name="debug_export_failed">Couldn’t save the debug log</string>
     <string name="package_not_installed_here">Not installed for this user</string>
+    <string name="package_no_launcher">This component has no launch screen. Its enable and disable controls remain available.</string>
     <string name="package_until_used_shell">Android restricts ADB-backed Shizuku from changing this temporary state. Open App info to see the controls available on this device.</string>
     <string name="freeze_counts_inactive">%1$d changed · %2$d already frozen · %3$d already inactive in this profile · %4$d unknown · %5$d failed</string>
     <string name="unfreeze_counts_not_installed">%1$d changed · %2$d already in that state · %3$d not installed in this profile · %4$d unknown · %5$d failed</string>

@@ -46,6 +46,12 @@
                         android:id="@+id/sort_by_name"
                         android:title="@string/sort_name"/>
                 <item
+                        android:id="@+id/sort_by_risk_recommended"
+                        android:title="@string/app_sort_risk_recommended"/>
+                <item
+                        android:id="@+id/sort_by_risk_unsafe"
+                        android:title="@string/app_sort_risk_unsafe"/>
+                <item
                         android:id="@+id/sort_by_install"
                         android:title="@string/sort_install"/>
                 <item

@@ -37,11 +37,11 @@ adb shell -T 'run-as com.aistra.hail.debug sh -c "cat > files/v1/tags.json"' <<'
 [{"tag":"Default","id":0},{"tag":"Legacy","id":-91}]
 JSON
 install_fixture() {
-    local name="$1" enabled="${2:-true}"
+    local name="$1" enabled="${2:-true}" label="${3:-Hail fixture $1}"
     cat > "$fixture_dir/AndroidManifest.xml" <<XML
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.aistra.hail.testfixture.$name" android:versionCode="1" android:versionName="1">
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="36" />
-    <application android:hasCode="false" android:label="Hail fixture $name" android:enabled="$enabled">
+    <application android:hasCode="false" android:label="$label" android:enabled="$enabled">
         <activity android:name="android.app.Activity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -66,7 +66,7 @@ adb install --no-incremental --no-streaming "$shizuku_apk"
 shizuku_dir="$(adb shell pm path moe.shizuku.privileged.api | tr -d '\r' | sed -n 's|^package:\(.*\)/base.apk$|\1|p')"
 test -n "$shizuku_dir"
 adb shell "$shizuku_dir/lib/x86_64/libshizuku.so"
-classes=com.aistra.hail.app.DeviceFreezeTest,com.aistra.hail.ui.settings.BackupSettingsTest,com.aistra.hail.ui.settings.BulkShortcutLauncherTest,com.aistra.hail.ui.apps.SystemAppsTest,com.aistra.hail.ui.apps.AppRiskPresentationTest,com.aistra.hail.ui.settings.DebugLogTest,com.aistra.hail.ui.settings.IndividualShortcutBatchTest
+classes=com.aistra.hail.app.DeviceFreezeTest,com.aistra.hail.ui.settings.BackupSettingsTest,com.aistra.hail.ui.settings.BulkShortcutLauncherTest,com.aistra.hail.ui.apps.SystemAppsTest,com.aistra.hail.ui.apps.AppRiskPresentationTest,com.aistra.hail.ui.settings.DebugLogTest,com.aistra.hail.ui.settings.IndividualShortcutBatchTest,com.aistra.hail.utils.ShizukuCompatibilityTest,com.aistra.hail.utils.ShizukuCommandServiceTest
 # Have the complete APK on the device before instrumentation starts. Keep Android's startup diagnostics on failure.
 capture_runner_state() {
     local prefix="$1"
@@ -154,6 +154,7 @@ for distribution in baseline current; do
     grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"
     pull_trace "benchmark-$distribution" "$report/benchmark-$distribution.jsonl"
 done
+
 python3 .github/scripts/check-bulk-performance.py "$report" "$release_version" "$release_code" | tee "$report/bulk-performance.txt"
 
 for server in shell root; do
@@ -199,3 +200,28 @@ for server in shell root; do
         grep 'HailParity.*Android verified' "$report/backend-$distribution-$server.log" | tail -n 1 >> "$report/parity.log"
     done
 done
+
+# Install the large inventory only after normal scenarios, parity and performance have finished.
+# The 284 fixture APKs must not change those established tests' inventories or measurements.
+echo "Preparing the separate 284-app native shortcut regression."
+for index in $(seq 1 284); do
+    number=$(printf '%03d' "$index")
+    label="Hail $number"
+    if [[ $index == 115 ]]; then label=Hail; fi
+    install_fixture "large$number" true "$label"
+done
+large_output="$report/large-shortcuts-runner.txt"
+large_rc=0
+timeout 15m adb shell am instrument -w -r \
+    -e class com.aistra.hail.ui.settings.LargeShortcutBatchTest \
+    -e hailCiFixtures true -e hailLargeShortcutBatch true \
+    com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner > "$large_output" || large_rc=$?
+cat "$large_output"
+adb pull /sdcard/Android/data/com.aistra.hail.debug/files/verification-large \
+    "$report/large-shortcut-evidence" >/dev/null 2>&1 || true
+if [[ $large_rc != 0 ]]; then
+    capture_runner_state large-shortcut-runner-failure
+    exit "$large_rc"
+fi
+python3 .github/scripts/check-device-results.py "$large_output" --suite large-shortcuts \
+    --evidence "$report/large-shortcut-evidence/large-shortcuts.json"

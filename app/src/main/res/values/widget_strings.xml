@@ -11,7 +11,8 @@
     <string name="all_apps_widget_launch">Open %1$s</string>
     <string name="all_apps_widget_refresh">Refresh apps</string>
     <string name="home_surfaces_repair">Refresh Home screen shortcuts</string>
-    <string name="home_surfaces_repair_summary">Refresh existing Hail shortcuts and the app grid. If your launcher erased its layout, add the grid again above.</string>
+    <string name="home_surfaces_repair_summary">Refresh icons and actions for existing Hail shortcuts, and refresh existing app grids. For missing Nova shortcuts, see Restore a Nova backup below.</string>
+    <string name="home_surfaces_refreshing">Refreshing shortcut icons and actions…</string>
     <string name="home_surfaces_refreshed">Existing shortcuts and app grids refreshed.</string>
     <string name="home_surfaces_refresh_failed">Could not refresh every shortcut. Your existing shortcuts were kept; tap to retry.</string>
 </resources>

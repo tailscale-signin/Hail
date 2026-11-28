@@ -21,6 +21,10 @@
 #-renamesourcefileattribute SourceFile
 
 -dontwarn io.github.libxposed.annotation.**
+# Shizuku instantiates this Binder class by its component name in a separate app_process.
+-keep class com.aistra.hail.shizuku.HailCommandService {
+    public <init>();
+}
 -adaptresourcefilecontents META-INF/xposed/java_init.list
 -keep,allowoptimization,allowobfuscation public class * extends io.github.libxposed.api.XposedModule {
     public <init>();

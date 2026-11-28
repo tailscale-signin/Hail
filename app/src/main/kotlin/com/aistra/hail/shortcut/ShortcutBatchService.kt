@@ -8,6 +8,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.os.PowerManager
+import android.app.KeyguardManager
 import android.net.Uri
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
@@ -16,6 +18,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.aistra.hail.R
 import com.aistra.hail.utils.HLog
+import com.aistra.hail.utils.DecisionLog
 import com.aistra.hail.utils.HTarget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +38,8 @@ class ShortcutBatchService : Service() {
     private var runner: Job? = null
     private var commandGeneration = 0L
     private var registered = false
+    private var screenLease: PowerManager.WakeLock? = null
+    private var leasedRequest: String? = null
     private val lockReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             ShortcutBatchController.pause(getString(R.string.individual_batch_locked))
@@ -54,6 +59,7 @@ class ShortcutBatchService : Service() {
         registered = true
         scope.launch {
             ShortcutBatchController.state.collect { current ->
+                updateScreenLease(current)
                 if (current.active) runCatching { manager.notify(NOTIFICATION, notification(current)) }.onFailure(HLog::e)
             }
         }
@@ -106,10 +112,44 @@ class ShortcutBatchService : Service() {
 
     override fun onDestroy() {
         ShortcutBatchController.serviceStopped()
+        releaseScreenLease()
         if (registered) unregisterReceiver(lockReceiver)
         scope.cancel()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         super.onDestroy()
+    }
+
+    /** Launcher confirmations can fully cover Hail, so its Activity flag alone is insufficient.
+     * This bounded display lease exists only during the explicit automatic batch. It never wakes
+     * or unlocks the phone; pressing Power still pauses the batch and releases it immediately. */
+    @Suppress("DEPRECATION")
+    private fun updateScreenLease(state: BatchState) {
+        if (!state.active || !state.automatic) { releaseScreenLease(); return }
+        val power = getSystemService(PowerManager::class.java) ?: return
+        if (!power.isInteractive || getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true) {
+            releaseScreenLease()
+            return
+        }
+        val key = "${state.batchId}:${state.position}:${state.awaiting?.requestId}"
+        if (key == leasedRequest && screenLease?.isHeld == true) return
+        try {
+            val lease = screenLease ?: power.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK,
+                "Hail:ShortcutBatch").apply { setReferenceCounted(false) }.also { screenLease = it }
+            // Renew only at actual queue progress, not on polling/callback fields. A stuck request
+            // pauses after 60 seconds; even a failed service cleanup cannot hold this indefinitely.
+            lease.acquire(90_000L)
+            leasedRequest = key
+        } catch (e: RuntimeException) {
+            releaseScreenLease()
+            HLog.e(e)
+            DecisionLog.begin("shortcut_batch", "screen_lease")?.error("screen_lease_failed", null, e)
+        }
+    }
+
+    private fun releaseScreenLease() {
+        screenLease?.let { if (it.isHeld) it.release() }
+        screenLease = null
+        leasedRequest = null
     }
 
     private fun notification(state: BatchState): android.app.Notification {

@@ -7,6 +7,8 @@ import android.text.InputType
 import android.view.*
 import android.widget.CompoundButton
 import android.widget.EditText
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import androidx.activity.result.contract.ActivityResultContracts.CreateDocument
 import androidx.appcompat.widget.SearchView
 import androidx.core.view.MenuHost
@@ -26,7 +28,9 @@ import com.aistra.hail.ui.home.PackageStatusDialog
 import com.aistra.hail.ui.failureDetails
 import com.aistra.hail.ui.main.MainFragment
 import com.aistra.hail.ui.showActionFeedback
+import com.aistra.hail.ui.FreezeFeedback
 import com.aistra.hail.utils.DecisionLog
+import com.aistra.hail.utils.AppRisks
 import com.aistra.hail.utils.HFiles
 import com.aistra.hail.utils.HPackages
 import com.aistra.hail.utils.HPolicy
@@ -46,6 +50,13 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     private var _binding: FragmentAppsBinding? = null
     private val binding get() = _binding!!
     private lateinit var appsAdapter: AppsAdapter
+    private val sortOptions = listOf(
+        HailData.SORT_NAME to R.string.sort_name,
+        HailData.SORT_RISK_RECOMMENDED to R.string.app_sort_risk_recommended,
+        HailData.SORT_RISK_UNSAFE to R.string.app_sort_risk_unsafe,
+        HailData.SORT_INSTALL to R.string.sort_install,
+        HailData.SORT_UPDATE to R.string.sort_update
+    )
 
     private var contextApp: ApplicationInfo? = null
     private var contextTargetDisabled = false
@@ -96,6 +107,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             applyDefaultInsetter { paddingRelative(isRtl, bottom = isLandscape) }
             registerForContextMenu(this)
         }
+        configureSortControls()
 
         model.isRefreshing.observe(viewLifecycleOwner) {
             binding.refresh.isRefreshing = it
@@ -114,6 +126,40 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             }
         }
         return binding.root
+    }
+
+    private fun configureSortControls() {
+        binding.appsSortControls.applyDefaultInsetter { marginRelative(isRtl, start = !isLandscape, end = true) }
+        binding.appRiskHelp.applyDefaultInsetter { marginRelative(isRtl, start = !isLandscape, end = true) }
+        binding.appsSort.adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item,
+            sortOptions.map { getString(it.second) }).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+        syncSortControl()
+        binding.appsSort.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val sort = sortOptions.getOrNull(position)?.first ?: return
+                if (sort == HailData.sortBy) return
+                HailData.changeAppsSort(sort)
+                updateDisplayAppList()
+                _binding?.recyclerView?.scrollToPosition(0)
+                requireActivity().invalidateOptionsMenu()
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        binding.appRiskInfo.setOnClickListener {
+            binding.appRiskHelp.visibility = if (binding.appRiskHelp.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
+        binding.appRiskSource.setOnClickListener {
+            if (!HUI.openLink(AppRisks.SOURCE_URL)) {
+                binding.root.showActionFeedback(getString(R.string.app_risk_source_unavailable))
+            }
+        }
+    }
+
+    private fun syncSortControl() {
+        val position = sortOptions.indexOfFirst { it.first == HailData.sortBy }.coerceAtLeast(0)
+        _binding?.appsSort?.let { if (it.selectedItemPosition != position) it.setSelection(position, false) }
     }
 
     override fun onItemClick(buttonView: CompoundButton) {
@@ -160,8 +206,10 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             R.id.action_extract_apk -> extractApk(pkg)
             R.id.action_uninstall -> uninstallApp(name, pkg)
             R.id.action_reinstall -> {
-                if (AppManager.reinstallApp(pkg)) updateAppList()
-                else binding.root.showActionFeedback(getString(R.string.operation_failed, name))
+                viewLifecycleOwner.lifecycleScope.launch {
+                    if (AppManager.reinstallApp(pkg)) updateAppList()
+                    else _binding?.root?.showActionFeedback(getString(R.string.operation_failed, name))
+                }
             }
 
             else -> return super.onContextItemSelected(item)
@@ -190,6 +238,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             binding.root.showActionFeedback(null)
             val result = AppManager.changeFrozen(listOf(pkg), disable, mode = mode, trace = trace)
             binding.root.showActionFeedback(result.failureDetails(disable))
+            if (disable && isResumed) FreezeFeedback.show(result, binding.root)
             if (result.changed.isEmpty()) updateAppList()
         }
     }
@@ -212,7 +261,9 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
                 }
             }
 
-            HailData.workingMode == HailData.MODE_DEFAULT -> AppManager.uninstallApp(pkg)
+            HailData.workingMode == HailData.MODE_DEFAULT -> viewLifecycleOwner.lifecycleScope.launch {
+                AppManager.uninstallApp(pkg)
+            }
             else -> showUninstallDialog(name, pkg)
         }
     }
@@ -220,7 +271,9 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     private fun showUninstallDialog(name: CharSequence, pkg: String) {
         PrivateDialogBuilder(activity).setTitle(name).setMessage(R.string.msg_uninstall)
             .setPositiveButton(android.R.string.ok) { _, _ ->
-                if (AppManager.uninstallApp(pkg)) updateAppList()
+                viewLifecycleOwner.lifecycleScope.launch {
+                    if (AppManager.uninstallApp(pkg)) updateAppList()
+                }
             }.setNegativeButton(android.R.string.cancel, null).show()
     }
 
@@ -259,9 +312,12 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             when (HailData.sortBy) {
                 HailData.SORT_INSTALL -> R.id.sort_by_install
                 HailData.SORT_UPDATE -> R.id.sort_by_update
+                HailData.SORT_RISK_RECOMMENDED -> R.id.sort_by_risk_recommended
+                HailData.SORT_RISK_UNSAFE -> R.id.sort_by_risk_unsafe
                 else -> R.id.sort_by_name
             }
         ).isChecked = true
+        syncSortControl()
         menu.findItem(
             if (HailData.filterSystemApps) R.id.filter_system_apps else R.id.filter_user_apps
         ).isChecked = true
@@ -274,6 +330,8 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
             R.id.sort_by_name -> changeAppsSort(HailData.SORT_NAME, item)
             R.id.sort_by_install -> changeAppsSort(HailData.SORT_INSTALL, item)
             R.id.sort_by_update -> changeAppsSort(HailData.SORT_UPDATE, item)
+            R.id.sort_by_risk_recommended -> changeAppsSort(HailData.SORT_RISK_RECOMMENDED, item)
+            R.id.sort_by_risk_unsafe -> changeAppsSort(HailData.SORT_RISK_UNSAFE, item)
             R.id.filter_user_apps -> changeAppsFilter(HailData.FILTER_USER_APPS, item)
             R.id.filter_system_apps -> changeAppsFilter(HailData.FILTER_SYSTEM_APPS, item)
 
@@ -287,7 +345,9 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
     private fun changeAppsSort(sort: String, item: MenuItem) {
         item.isChecked = true
         HailData.changeAppsSort(sort)
+        syncSortControl()
         updateDisplayAppList()
+        binding.recyclerView.scrollToPosition(0)
     }
 
     private fun changeAppsFilter(filter: String, item: MenuItem) {
@@ -322,6 +382,7 @@ class AppsFragment : MainFragment(), AppsAdapter.OnItemClickListener, AppsAdapte
 
     override fun onDestroyView() {
         contextApp = null
+        binding.appsSort.onItemSelectedListener = null
         binding.recyclerView.adapter = null
         _binding = null
         super.onDestroyView()

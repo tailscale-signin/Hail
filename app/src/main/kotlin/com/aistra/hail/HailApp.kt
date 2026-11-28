@@ -21,14 +21,17 @@ import com.aistra.hail.utils.HShortcuts
 import com.aistra.hail.utils.HLog
 import com.aistra.hail.utils.DecisionLog
 import com.aistra.hail.utils.HUI
+import com.aistra.hail.utils.ShizukuConnection
 import com.aistra.hail.widget.AllAppsWidget
 import com.aistra.hail.widget.HomeSurfaceReceiver
 import kotlinx.coroutines.*
+import java.io.File
 
 class HailApp : Application() {
     override fun onCreate() {
         super.onCreate()
         app = this
+        ShizukuConnection.initialize()
         // DirtyDataUpdater.update(app)
         setAppTheme(HailData.appTheme)
         val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
@@ -62,6 +65,7 @@ class HailApp : Application() {
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val shortcutDispatcher = Dispatchers.IO.limitedParallelism(1)
     private var serviceUpdate: Job? = null
+    private var shortcutIconRepair: Job? = null
     private var lastServiceState: Pair<Boolean, Boolean>? = null
 
     fun exportDebugLog(uri: Uri) {
@@ -80,6 +84,26 @@ class HailApp : Application() {
 
     fun clearRecentShortcuts() {
         appScope.launch(shortcutDispatcher) { runCatching(HShortcuts::removeRecentApps).onFailure(HLog::e) }
+    }
+
+    /** Android restores pin records without bitmap icons. This marker never travels with a backup. */
+    fun repairShortcutIconsOnce() {
+        if (!HTarget.O || shortcutIconRepair?.isActive == true) return
+        shortcutIconRepair = appScope.launch(shortcutDispatcher) {
+            try {
+                val marker = File(noBackupFilesDir, "shortcut-icons-restored-v1")
+                // Do not mark an empty list: Android or the launcher may restore its pins later.
+                if (!marker.exists() && HShortcuts.pinnedIds().isNotEmpty() &&
+                    HShortcuts.refreshPinnedAppShortcuts(regenerateIcons = true)) {
+                    marker.writeText("complete\n")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                HLog.e(error)
+                // A limited/partial update remains retryable on the next foreground visit.
+            }
+        }
     }
 
     fun recordLaunch(pkg: String) {

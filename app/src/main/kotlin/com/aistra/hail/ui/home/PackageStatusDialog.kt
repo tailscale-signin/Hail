@@ -21,6 +21,7 @@ import com.aistra.hail.utils.DecisionLog
 import com.aistra.hail.utils.HPackages
 import com.aistra.hail.utils.HUI
 import com.aistra.hail.ui.PrivateDialogBuilder
+import com.aistra.hail.ui.FreezeFeedback
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -96,6 +97,9 @@ class PackageStatusDialog : DialogFragment() {
         }
         val lookup = PackageLookup(method ?: mode, trace)
         val record = withContext(Dispatchers.IO) { lookup.find(pkg) }
+        val hasLauncher = if (record?.installed == true) withContext(Dispatchers.IO) {
+            HPackages.hasLauncherActivity(pkg, trace)
+        } else null
         val setting = withContext(Dispatchers.IO) { record?.setting() }
         val enabled = record?.takeIf { it.installed }?.canDisable(setting)
         val storedSetting = record?.takeIf { !it.installed && it.info?.let(HPackages::isSystemApp) == true }
@@ -139,6 +143,7 @@ class PackageStatusDialog : DialogFragment() {
                 getString(if (runCatching { Shizuku.pingBinder() }.getOrDefault(false)) R.string.authorize_shizuku else R.string.start_shizuku)
             else null,
             getString(status),
+            if (hasLauncher == false) getString(R.string.package_no_launcher) else null,
             storedStatus?.let { getString(it) },
             if (canChangeStoredSetting) getString(R.string.package_retained_setting_guidance) else null,
             if (enabled == false && method != null) getString(if (stopConfirmed) R.string.disable_confirmed else R.string.disable_unconfirmed) else null,
@@ -179,6 +184,7 @@ class PackageStatusDialog : DialogFragment() {
         work = lifecycleScope.launch {
             val result = AppManager.changeFrozen(listOf(pkg), disable, mode = mode, source = source)
             message = if (result.reachedTarget(pkg, disable)) null else AppManager.resultMessage(result, disable)
+            if (disable && isResumed) FreezeFeedback.show(result, binding.root)
             render()
         }
     }

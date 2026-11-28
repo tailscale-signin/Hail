@@ -24,6 +24,7 @@ on:
       - '!.github/scripts/check-device-results.py'
       - '!.github/scripts/check-decision-log.py'
       - '!.github/scripts/check-bulk-performance.py'
+      - '!.github/scripts/test-nova-shortcuts.sh'
 
 permissions:
   contents: read
@@ -46,11 +47,17 @@ jobs:
         with:
           packages: 'platforms;android-37.2 build-tools;36.0.0'
       - name: Test and build debug APK
-        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: Hail-debug
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+      - name: Upload matching debug instrumentation APK
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: Hail-debug-androidTest
+          path: app/build/outputs/apk/androidTest/debug/*.apk
           if-no-files-found: error
       - name: Enable emulator acceleration
         run: sudo chmod a+rw /dev/kvm
@@ -80,10 +87,51 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
-  release_readiness:
+  verify_nova:
     needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platforms;android-36 build-tools;36.0.0'
+      - name: Download candidate debug APK from verification
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Hail-debug
+          path: .ci-apks/debug
+      - name: Download matching candidate instrumentation
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Hail-debug-androidTest
+          path: .ci-apks/androidTest
+      - name: Enable emulator acceleration
+        run: sudo chmod a+rw /dev/kvm
+      - name: Verify 284 individual shortcuts with official Nova on Android 16
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: bash .github/scripts/test-nova-shortcuts.sh
+      - name: Upload Nova launcher verification evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: nova-shortcut-test-report
+          path: app/build/outputs/androidTest-results/nova/
+
+  release_readiness:
+    needs: [verify, verify_nova]
     if: >-
       needs.verify.result == 'success' &&
+      needs.verify_nova.result == 'success' &&
       github.repository == 'tailscale-signin/Hail' &&
       github.ref == 'refs/heads/main' &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish_release == true) ||
@@ -118,9 +166,10 @@ jobs:
           PYROUTE
 
   publish:
-    needs: [verify, release_readiness]
+    needs: [verify, verify_nova, release_readiness]
     if: >-
       needs.verify.result == 'success' &&
+      needs.verify_nova.result == 'success' &&
       needs.release_readiness.outputs.repository_signing == 'true' &&
       github.repository == 'tailscale-signin/Hail' &&
       github.ref == 'refs/heads/main' &&

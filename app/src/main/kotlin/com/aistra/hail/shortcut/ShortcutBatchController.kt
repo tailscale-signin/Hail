@@ -13,6 +13,7 @@ import android.os.PowerManager
 import com.aistra.hail.R
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.utils.HLog
+import com.aistra.hail.utils.DecisionLog
 import com.aistra.hail.utils.HShortcuts
 import com.aistra.hail.utils.HTarget
 import kotlinx.coroutines.CancellationException
@@ -45,6 +46,8 @@ object ShortcutBatchController {
     private var storageFailed = false
     private var manualLostFocus = false
     private var manualReturnedAtElapsed = 0L
+    private var activityFocused = false
+    private var activityFocusedAtElapsed = 0L
 
     init {
         scope.launch {
@@ -104,7 +107,12 @@ object ShortcutBatchController {
     }
 
     fun confirmationObserved(requestId: String) {
-        changePending(requestId) { it.copy(confirmationObserved = true) }
+        synchronized(lock) {
+            if (mutableState.value.awaiting?.requestId != requestId) return
+            activityFocused = false
+            activityFocusedAtElapsed = 0L
+            changePending(requestId) { it.copy(confirmationObserved = true) }
+        }
     }
 
     fun claimAutomationClick(requestId: String): Boolean = synchronized(lock) {
@@ -128,6 +136,8 @@ object ShortcutBatchController {
     }
 
     internal fun activityFocusChanged(focused: Boolean) = synchronized(lock) {
+        activityFocused = focused
+        activityFocusedAtElapsed = if (focused) SystemClock.elapsedRealtime() else 0L
         val current = mutableState.value
         val pending = current.awaiting
         if (!current.active || current.automatic || pending == null) return@synchronized
@@ -163,22 +173,15 @@ object ShortcutBatchController {
         }
         val pinned = withContext(Dispatchers.IO) { HShortcuts.pinnedIds() }
         val pending = initial.awaiting
-        // The user's explicit Resume/Retry is the only way to reissue an interrupted request.
-        // Read back first: an approval may have survived process loss without its callback.
-        if (pending != null) callback(pending, PendingIntent.FLAG_NO_CREATE)?.cancel()
-        change { current ->
-            if (current != initial) current
-            else {
-                var next = current.copy(status = BatchStatus.RUNNING, awaiting = null, message = null,
-                    automatic = current.automatic && !manual)
-                if (current.current in pinned) next = next.advance(
-                    if (pending != null) BatchState.Outcome.ADDED else BatchState.Outcome.EXISTING)
-                else if (skip) next = next.advance(BatchState.Outcome.SKIPPED)
-                // Both controls are explicit user requests; neither is reached by a timeout.
-                else if (retry) next = next.copy(message = null)
-                next
-            }
-        }?.saved?.await()
+        // Compare request identity, not the complete state: a legitimate callback may have arrived
+        // during the suspended pin read. Both Resume and Retry reconcile existing pins first.
+        val written = change { current -> current.resumeWithPins(initial.batchId, pending?.requestId,
+            pinned, skip, manual, SystemClock.elapsedRealtime(), retry, pending?.approvalReceived == true) } ?: return
+        written.saved.await()
+        if (pending != null && written.state.awaiting?.requestId != pending.requestId) {
+            callback(pending, PendingIntent.FLAG_NO_CREATE)?.cancel()
+        }
+        logEvent(if (skip) "skip" else if (retry) "retry" else "resume", state.value)
     }
 
     internal suspend fun callbackReceived(batchId: String, requestId: String, pkg: String) {
@@ -199,7 +202,17 @@ object ShortcutBatchController {
                 }
                 val pending = current.awaiting
                 if (pending != null) {
-                    if (pending.approvalReceived && (!current.automatic || pending.confirmationDismissed)) {
+                    // The progress Activity's own focus is an independent dismissal signal. It also
+                    // handles Android accepting an already-pinned ID without opening a new prompt.
+                    if (current.automatic && !pending.confirmationDismissed && activityFocused &&
+                        SystemClock.elapsedRealtime() - activityFocusedAtElapsed >= FOCUS_SETTLE_MS &&
+                        ((pending.automationClicked && pending.confirmationObserved) ||
+                            (pending.approvalReceived &&
+                                SystemClock.elapsedRealtime() - pending.requestedAtElapsed >= NO_DIALOG_SETTLE_MS))) {
+                        changePending(pending.requestId) { it.copy(confirmationDismissed = true) }
+                        continue
+                    }
+                    if (current.canCheckPendingPin && (!current.automatic || pending.confirmationDismissed)) {
                         val pinned = withContext(Dispatchers.IO) { HShortcuts.pinnedIds() }
                         if (pending.packageName in pinned) {
                             change { if (it.awaiting?.requestId == pending.requestId)
@@ -215,6 +228,7 @@ object ShortcutBatchController {
                         break
                     }
                     if (SystemClock.elapsedRealtime() - pending.requestedAtElapsed > REQUEST_TIMEOUT_MS) {
+                        logEvent("confirmation_timeout", state.value)
                         pause(context.getString(R.string.individual_batch_waiting))
                         break
                     }
@@ -242,6 +256,7 @@ object ShortcutBatchController {
                 if (!state.value.active || state.value.awaiting?.requestId != request.requestId) continue
                 val response = callback(request)!!
                 val accepted = withContext(Dispatchers.IO) { HShortcuts.requestPin(shortcut, response.intentSender) }
+                logEvent("request_dispatched", state.value, "accepted" to accepted)
                 if (!accepted) {
                     response.cancel()
                     pause(context.getString(R.string.individual_batch_request_failed))
@@ -251,6 +266,8 @@ object ShortcutBatchController {
                 throw e
             } catch (e: Exception) {
                 HLog.e(e)
+                logEvent("request_error", state.value, "errorType" to e.javaClass.name,
+                    "error" to e.message?.take(300))
                 pause(context.getString(R.string.individual_batch_request_failed))
             }
         }
@@ -279,8 +296,28 @@ object ShortcutBatchController {
         val after = transform(before)
         if (!force && after == before) return@synchronized null
         mutableState.value = after
+        if (after != before) logEvent(when {
+            after.batchId != before.batchId -> "batch_started"
+            after.status != before.status -> "batch_${after.status.name.lowercase()}"
+            after.position != before.position -> "pin_verified"
+            after.awaiting?.requestId != before.awaiting?.requestId -> "request_prepared"
+            after.awaiting?.approvalReceived != before.awaiting?.approvalReceived -> "approval_received"
+            after.awaiting?.confirmationDismissed != before.awaiting?.confirmationDismissed -> "confirmation_dismissed"
+            else -> "confirmation_updated"
+        }, after)
         if (!after.initialized || after.batchId == null) return@synchronized null
         Write(after).also { writes.trySend(it).getOrThrow() }
+    }
+
+    private fun logEvent(step: String, current: BatchState, vararg fields: Pair<String, Any?>) {
+        DecisionLog.begin("shortcut_batch", step, pkg = current.awaiting?.packageName)?.event(step,
+            current.awaiting?.packageName, "batch" to current.batchId, "request" to current.awaiting?.requestId,
+            "position" to current.position, "total" to current.total, "status" to current.status.name,
+            "automatic" to current.automatic, "launcher" to current.launcherPackage,
+            "approved" to current.awaiting?.approvalReceived,
+            "observed" to current.awaiting?.confirmationObserved,
+            "clicked" to current.awaiting?.automationClicked,
+            "dismissed" to current.awaiting?.confirmationDismissed, "reason" to current.message, *fields)
     }
 
     private fun callback(request: PendingShortcut, additionalFlags: Int = 0): PendingIntent? {
@@ -309,9 +346,14 @@ object ShortcutBatchController {
         val home = currentHomePackage() ?: return null
         val activities = context.packageManager.queryIntentActivities(
             Intent(LauncherApps.ACTION_CONFIRM_PIN_SHORTCUT).setPackage(home), 0
-        ).mapNotNull { it.activityInfo?.takeIf { activity -> activity.enabled }?.name }.toSet()
+        ).mapNotNull { it.activityInfo?.takeIf { activity -> activity.enabled && activity.packageName == home } }
+            // An activity alias resolves under its public component name, while accessibility
+            // can report the real Activity class. Both belong to this resolved pin handler.
+            .flatMap { listOfNotNull(it.name, it.targetActivity) }.toSet()
         return (home to activities).takeIf { activities.isNotEmpty() }
     }
 
     private const val REQUEST_TIMEOUT_MS = 60_000L
+    private const val FOCUS_SETTLE_MS = 500L
+    private const val NO_DIALOG_SETTLE_MS = 2_000L
 }

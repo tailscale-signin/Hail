@@ -11,6 +11,7 @@ composePreference = "1.1.1"
 constraintlayout = "2.2.2"
 coreKtx = "1.19.1"
 dhizukuApi = "2.7.0"
+desugarJdkLibs = "2.1.5"
 hiddenapibypass = "6.2"
 insetter = "0.6.1"
 kotlinxCoroutinesAndroid = "1.11.0"
@@ -48,6 +49,7 @@ androidx-swiperefreshlayout = { module = "androidx.swiperefreshlayout:swiperefre
 appiconloader = { module = "me.zhanghai.android.appiconloader:appiconloader", version.ref = "appiconloader" }
 compose-preference = { module = "me.zhanghai.compose.preference:library", version.ref = "composePreference" }
 dhizuku-api = { module = "io.github.iamr0s:Dhizuku-API", version.ref = "dhizukuApi" }
+desugar-jdk-libs = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desugarJdkLibs" }
 hiddenapibypass = { module = "org.lsposed.hiddenapibypass:hiddenapibypass", version.ref = "hiddenapibypass" }
 insetter = { module = "dev.chrisbanes.insetter:insetter", version.ref = "insetter" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinxCoroutinesAndroid" }

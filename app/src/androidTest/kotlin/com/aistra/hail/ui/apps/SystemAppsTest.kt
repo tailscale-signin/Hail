@@ -23,8 +23,11 @@ import com.aistra.hail.R
 import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.FreezeResult
+import com.aistra.hail.app.HailApi
 import com.aistra.hail.app.HailData
 import com.aistra.hail.ui.main.MainActivity
+import com.aistra.hail.ui.api.InternalActionActivity
+import androidx.lifecycle.Lifecycle
 import com.aistra.hail.ui.home.HomeRow
 import com.aistra.hail.ui.home.PagerAdapter
 import com.aistra.hail.utils.HPackages
@@ -231,6 +234,115 @@ class SystemAppsTest {
         } finally {
             shell("pm default-state --user ${HPackages.myUserId} $pkg")
             instrumentation.runOnMainSync { HailData.checkedList.clear(); HailData.checkedList.addAll(saved) }
+        }
+    }
+
+    @Test fun launcherlessSystemComponentKeepsStateAndIgnoresLaunchTaps() = withAppFilters(true) { companion ->
+        val info = listOf("com.android.dreams.basic", "com.android.printspooler")
+            .mapNotNull { HPackages.getApplicationInfoOrNull(it, HPackages.INSTALLED_FOR_USER) }
+            .first { HPackages.isSystemApp(it) && HPackages.hasLauncherActivity(it.packageName) == false }
+        val pkg = info.packageName
+        val companionPkg = companion.packageName
+        val initial = listOf(pkg, companionPkg).associateWith(pm::getApplicationEnabledSetting)
+        val saved = HailData.checkedList.toList()
+        val originalBiometric = HailData.biometricLogin
+        val label = info.loadLabel(pm).toString()
+        prefs.edit().putBoolean(HailData.BIOMETRIC_LOGIN, false).commit()
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                selectShizukuDisable()
+                val mode = HailData.MODE_SHIZUKU_DISABLE
+                fun assertInstalledState(frozen: Boolean) {
+                    val lookup = PackageLookup(mode)
+                    assertEquals(true, lookup.find(pkg)?.installed)
+                    assertEquals(true, lookup.fromInventory(pkg)?.installed)
+                    assertEquals(true, lookup.all(includeRetainedSystem = true)[pkg]?.installed)
+                    assertEquals(if (frozen) AppInfo.State.FROZEN else AppInfo.State.UNFROZEN,
+                        AppManager.state(lookup.fromInventory(pkg), mode))
+                    assertEquals(false, HPackages.hasLauncherActivity(pkg))
+                    val settingBefore = pm.getApplicationEnabledSetting(pkg)
+                    var tagActionCalled = false
+                    assertNull(runBlocking {
+                        AppManager.prepareLaunch(pkg, mode) { tagActionCalled = true }
+                    })
+                    assertFalse("A no-launch tap must not run the associated tag action", tagActionCalled)
+                    assertEquals(settingBefore, pm.getApplicationEnabledSetting(pkg))
+                }
+                val enabled = runBlocking { AppManager.changeFrozen(listOf(pkg), false, mode = mode) }
+                assertTrue(AppManager.resultMessage(enabled, false), enabled.reachedTarget(pkg, false))
+                scenario.onActivity {
+                    HailData.checkedList.clear()
+                    HailData.checkedList.addAll(listOf(AppInfo(pkg), AppInfo(companionPkg)))
+                }
+                await(By.res(ctx.packageName, "nav_home")).click()
+                val row = By.res(ctx.packageName, "app_name").textContains(label)
+                assertInstalledState(frozen = false)
+                await(row).click()
+                device.waitForIdle()
+                assertFalse(device.hasObject(By.res(ctx.packageName, "report")))
+                assertFalse(device.hasObject(By.res(ctx.packageName, "action_feedback_message")))
+                assertFalse(device.hasObject(By.res(ctx.packageName, "app_availability")))
+                assertEquals(ctx.packageName, device.currentPackageName)
+
+                // Explicit long-press management remains available for this installed component.
+                await(row).longClick()
+                await(text(R.string.package_status_controls)).click()
+                await(By.res(ctx.packageName, "report").textContains(ctx.getString(R.string.package_enabled)))
+                await(By.res(ctx.packageName, "report").textContains(ctx.getString(R.string.package_no_launcher)))
+                await(text(R.string.disable_app)).click()
+                waitFor("Android disabled the launcherless component") {
+                    pm.getApplicationEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+                }
+                await(text(R.string.enable_app))
+                device.pressBack()
+                assertInstalledState(frozen = true)
+                await(row).click()
+                device.waitForIdle()
+                assertFalse("A frozen component tap must not display a launch error", device.hasObject(text(R.string.activity_not_found)))
+                assertFalse(device.hasObject(By.res(ctx.packageName, "action_feedback_message")))
+                assertEquals(PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER, pm.getApplicationEnabledSetting(pkg))
+
+                // An existing private shortcut with a tag must also finish quietly without thawing
+                // either the launcherless component or other packages associated with that tag.
+                val frozenCompanion = runBlocking { AppManager.changeFrozen(listOf(companionPkg), true, mode = mode) }
+                assertTrue(frozenCompanion.reachedTarget(companionPkg, true))
+                val tag = HailData.tags.first { it.second == 0 }.first
+                val request = HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, pkg)
+                    .putExtra(HailData.KEY_TAG, tag).setClass(ctx, InternalActionActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ActivityScenario.launch<InternalActionActivity>(request).use { launch ->
+                    waitFor("The private no-launch action should finish without an error page") {
+                        launch.state == Lifecycle.State.DESTROYED
+                    }
+                }
+                assertEquals(PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER, pm.getApplicationEnabledSetting(pkg))
+                assertEquals(PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER, pm.getApplicationEnabledSetting(companionPkg))
+                await(By.res(ctx.packageName, "nav_home"))
+                assertFalse(device.hasObject(text(R.string.action_needs_attention)))
+
+                await(row).longClick()
+                await(text(R.string.package_status_controls)).click()
+                await(text(R.string.enable_app)).click()
+                waitFor("Explicit Enable still restores the launcherless component") {
+                    pm.getApplicationEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                }
+                assertInstalledState(frozen = false)
+                device.pressBack()
+            }
+        } finally {
+            initial.forEach { (name, setting) ->
+                val command = when (setting) {
+                    PackageManager.COMPONENT_ENABLED_STATE_DEFAULT -> "default-state"
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED -> "disable"
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER -> "disable-user"
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> "disable-until-used"
+                    else -> "enable"
+                }
+                shell("pm $command --user ${HPackages.myUserId} $name")
+            }
+            prefs.edit().putBoolean(HailData.BIOMETRIC_LOGIN, originalBiometric).commit()
+            instrumentation.runOnMainSync { HailData.checkedList.clear(); HailData.checkedList.addAll(saved) }
+            device.pressHome()
         }
     }
 
