@@ -61,6 +61,8 @@ import com.aistra.hail.ui.theme.AppTheme
 import com.aistra.hail.utils.*
 import com.aistra.hail.ui.PrivateDialogBuilder
 import com.aistra.hail.widget.AllAppsWidget
+import com.aistra.hail.shortcut.ShortcutBatchActivity
+import com.aistra.hail.shortcut.ShortcutPinAccessibilityService
 import androidx.lifecycle.LifecycleEventObserver
 import com.google.android.material.textview.MaterialTextView
 import com.rosan.dhizuku.api.Dhizuku
@@ -108,12 +110,16 @@ class SettingsFragment : MainFragment(), MenuProvider {
     @Composable
     private fun SettingsScreen() {
         BackupDialog()
-        val widgetMessage by AllAppsWidget.pinMessage.collectAsState()
+        val shortcutAssistantEnabled = remember {
+            mutableStateOf(ShortcutPinAccessibilityService.isEnabled(requireContext()))
+        }
         val repairMessage = remember { mutableStateOf(R.string.home_surfaces_repair_summary) }
         DisposableEffect(viewLifecycleOwner) {
             val lifecycle = viewLifecycleOwner.lifecycle
             val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_RESUME) AllAppsWidget.updateSettingsState(requireContext())
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    shortcutAssistantEnabled.value = ShortcutPinAccessibilityService.isEnabled(requireContext())
+                }
             }
             lifecycle.addObserver(observer)
             onDispose { lifecycle.removeObserver(observer) }
@@ -339,11 +345,21 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 onClick = ::addPinShortcut
             )
             preference(
-                key = "add_all_apps_widget",
-                title = { Text(stringResource(R.string.all_apps_widget_add)) },
-                summary = { Text(stringResource(widgetMessage)) },
+                key = "add_all_app_shortcuts",
+                title = { Text(stringResource(R.string.add_all_app_shortcuts)) },
+                summary = { Text(stringResource(R.string.add_all_app_shortcuts_summary)) },
                 icon = { Icon(Icons.Outlined.Apps, contentDescription = null) },
-                onClick = { AllAppsWidget.requestPin(requireContext()) }
+                onClick = { ShortcutBatchActivity.launch(requireContext()) }
+            )
+            preference(
+                key = "shortcut_assistant",
+                title = { Text(stringResource(R.string.shortcut_assistant_settings_title)) },
+                summary = {
+                    Text(stringResource(if (shortcutAssistantEnabled.value)
+                        R.string.shortcut_assistant_settings_ready else R.string.shortcut_assistant_settings_setup))
+                },
+                icon = { Icon(Icons.Outlined.AccessibilityNew, contentDescription = null) },
+                onClick = { ShortcutPinAccessibilityService.openSettings(requireContext()) }
             )
             preference(
                 key = "refresh_home_surfaces",

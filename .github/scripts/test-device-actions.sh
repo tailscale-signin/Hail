@@ -66,7 +66,7 @@ adb install --no-incremental --no-streaming "$shizuku_apk"
 shizuku_dir="$(adb shell pm path moe.shizuku.privileged.api | tr -d '\r' | sed -n 's|^package:\(.*\)/base.apk$|\1|p')"
 test -n "$shizuku_dir"
 adb shell "$shizuku_dir/lib/x86_64/libshizuku.so"
-classes=com.aistra.hail.app.DeviceFreezeTest,com.aistra.hail.ui.settings.BackupSettingsTest,com.aistra.hail.ui.settings.BulkShortcutLauncherTest,com.aistra.hail.ui.apps.SystemAppsTest,com.aistra.hail.ui.apps.AppRiskPresentationTest,com.aistra.hail.ui.settings.DebugLogTest
+classes=com.aistra.hail.app.DeviceFreezeTest,com.aistra.hail.ui.settings.BackupSettingsTest,com.aistra.hail.ui.settings.BulkShortcutLauncherTest,com.aistra.hail.ui.apps.SystemAppsTest,com.aistra.hail.ui.apps.AppRiskPresentationTest,com.aistra.hail.ui.settings.DebugLogTest,com.aistra.hail.ui.settings.IndividualShortcutBatchTest
 # Have the complete APK on the device before instrumentation starts. Keep Android's startup diagnostics on failure.
 capture_runner_state() {
     local prefix="$1"

@@ -1,0 +1,1 @@
+Restore individual Home screen app icons. Optional shortcut assistant adds them one at a time from one start action after Android Accessibility setup. Save batch progress, verify each placement, skip pinned IDs, and provide pause/cancel/resume/manual controls. Existing widgets and the dark-grey/risk-guidance improvements remain supported.

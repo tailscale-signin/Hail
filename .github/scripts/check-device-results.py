@@ -4,6 +4,8 @@ import sys
 import xml.etree.ElementTree as ET
 
 expected = {
+    ("IndividualShortcutBatchTest", "oneSettingsClickAutomaticallyPinsAllAppsAsSeparateIcons"),
+    ("IndividualShortcutBatchTest", "manualDismissReopenCancelAndApprovalPreserveDurableState"),
     ("BulkShortcutLauncherTest", "catalogContainsDisabledLaunchersAndUsesFixedPrivateLaunchRoute"),
     ("BulkShortcutLauncherTest", "pinnedAppShortcutKeepsItsIdAndActionAcrossRefresh"),
     ("AppRiskPresentationTest", "offlineCommunitySnapshotAndCoreFallbackAreAvailable"),
@@ -16,7 +18,7 @@ expected = {
     ("BackupSettingsTest", "existingSingleTagAndMultiTagListsSurviveUpgrade"),
     ("BackupSettingsTest", "invalidBackupsAndDeviceLocalSettings"),
     ("BackupSettingsTest", "settingsWritesFilePreviewsCancelsAndRestoresMultiTagBackup"),
-    ("BulkShortcutLauncherTest", "dismissRetryApproveAndRepeatFromSettings"),
+    ("BulkShortcutLauncherTest", "existingWidgetCanBeRestoredRefreshedAndAddedAgain"),
     ("SystemAppsTest", "idleModeOpensAndroidSettingsForTheSelectedSystemApp"),
     ("SystemAppsTest", "disablesAndEnablesAPreinstalledAppWithShizukuPermission"),
     ("SystemAppsTest", "storesAnExplicitDisableForAManifestDisabledApp"),

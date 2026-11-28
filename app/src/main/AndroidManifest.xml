@@ -95,6 +95,11 @@
                 android:exported="false"
                 android:launchMode="singleInstance"
                 android:theme="@style/Theme.Hail.Translucent"/>
+        <activity
+                android:name=".shortcut.ShortcutBatchActivity"
+                android:exported="false"
+                android:launchMode="singleTop"
+                android:theme="@style/Theme.Hail"/>
 
         <provider
                 android:name="rikka.shizuku.ShizukuProvider"
@@ -117,6 +122,9 @@
         </receiver>
         <receiver
                 android:name=".receiver.ScreenOffReceiver"
+                android:exported="false"/>
+        <receiver
+                android:name=".shortcut.ShortcutBatchReceiver"
                 android:exported="false"/>
         <receiver
                 android:name=".widget.AllAppsWidget"
@@ -145,6 +153,26 @@
                 android:name=".widget.AllAppsWidgetService"
                 android:permission="android.permission.BIND_REMOTEVIEWS"
                 android:exported="false"/>
+        <service
+                android:name=".shortcut.ShortcutBatchService"
+                android:exported="false"
+                android:foregroundServiceType="specialUse">
+            <property
+                    android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                    android:value="User-started sequential addition of app shortcuts with visible progress and cancellation"/>
+        </service>
+        <service
+                android:name=".shortcut.ShortcutPinAccessibilityService"
+                android:exported="true"
+                android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+                android:label="@string/shortcut_pin_assistant_name">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService"/>
+            </intent-filter>
+            <meta-data
+                    android:name="android.accessibilityservice"
+                    android:resource="@xml/shortcut_pin_accessibility_service"/>
+        </service>
         <service
                 android:name=".services.QSTileService"
                 android:exported="true"

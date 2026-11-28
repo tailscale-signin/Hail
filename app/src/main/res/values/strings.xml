@@ -29,8 +29,8 @@
     <string name="action_tag_add">Add tag</string>
     <string name="action_tag_remove">Remove tag</string>
     <string name="action_tag_set">Set tag</string>
-    <string name="add_all_app_shortcuts">Add all app shortcuts to Home screen</string>
-    <string name="add_all_app_shortcuts_summary">Create a shortcut for each app in your Hail list.</string>
+    <string name="add_all_app_shortcuts">Add all apps to Home screen</string>
+    <string name="add_all_app_shortcuts_summary">Add a separate Hail shortcut for each launchable app, one at a time. Set up the shortcut assistant once to approve the launcher prompts automatically.</string>
     <string name="shortcut_batch_empty">Add apps to Hail first.</string>
     <string name="shortcut_batch_unsupported">Your current launcher does not support adding Home screen shortcuts.</string>
     <string name="shortcut_batch_progress">%1$s (%2$d of %3$d)</string>

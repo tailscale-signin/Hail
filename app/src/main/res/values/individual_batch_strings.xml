@@ -1,0 +1,37 @@
+<resources>
+    <string name="individual_batch_title">Add individual app shortcuts</string>
+    <string name="individual_batch_description">Add a separate Hail shortcut for every launchable app in this Android profile, including disabled apps. Each icon keeps Hail’s unfreeze-and-open action.</string>
+    <string name="individual_batch_assistant_explanation">For automatic adding, enable Hail’s shortcut assistant in Android Accessibility settings once. During a batch you start, it confirms only Hail’s Add shortcut prompts in your selected launcher. It stops when the batch ends, is paused or cancelled, or the screen locks. You can disable the assistant again at any time.</string>
+    <string name="individual_batch_enable_assistant">Enable shortcut assistant</string>
+    <string name="individual_batch_assistant_connecting">Waiting for the shortcut assistant to connect…</string>
+    <string name="individual_batch_start">Add all shortcuts</string>
+    <string name="individual_batch_start_manual">Add manually</string>
+    <string name="individual_batch_continue_manual">Continue manually</string>
+    <string name="individual_batch_manual_description">Manual mode asks you to approve each shortcut in your launcher.</string>
+    <string name="individual_batch_resume">Resume</string>
+    <string name="individual_batch_retry">Retry current app</string>
+    <string name="individual_batch_skip">Skip current app</string>
+    <string name="individual_batch_pause">Pause</string>
+    <string name="individual_batch_cancel">Cancel batch</string>
+    <string name="individual_batch_close">Close</string>
+    <string name="individual_batch_paused">Batch paused</string>
+    <string name="individual_batch_counts">%1$d of %2$d apps processed</string>
+    <string name="individual_batch_results">%1$d added · %2$d already pinned · %3$d skipped</string>
+    <string name="individual_batch_finished">Shortcuts added</string>
+    <string name="individual_batch_empty">No launchable apps were found in this Android profile.</string>
+    <string name="individual_batch_interrupted">The previous batch was interrupted. Resume to check existing shortcuts and continue.</string>
+    <string name="individual_batch_locked">The batch paused because the device locked or this Android profile became inactive. Unlock the device and resume.</string>
+    <string name="individual_batch_launcher_changed">Your default launcher changed. Switch back to the original launcher to resume, or cancel and start a new batch.</string>
+    <string name="individual_batch_no_launcher">Your current launcher does not support adding individual shortcuts. Choose a compatible default launcher and try again.</string>
+    <string name="individual_batch_android_required">Verified batch adding requires Android 8 or later. You can still add individual shortcuts from each app’s menu.</string>
+    <string name="individual_batch_request_failed">The current shortcut could not be added. Check your launcher, then retry or skip this app.</string>
+    <string name="individual_batch_service_failed">The batch could not start in the background. Return to this screen and try again.</string>
+    <string name="individual_batch_storage_failed">Hail could not save batch progress. The batch has stopped. Free some storage and try again.</string>
+    <string name="individual_batch_waiting">No completed launcher approval was received. Existing shortcuts are preserved. Retry or skip this app when you are ready.</string>
+    <string name="individual_batch_cancelled">Batch cancelled. Shortcuts already added stay on your Home screen. A launcher prompt already on screen may still need to be dismissed.</string>
+    <string name="individual_batch_assistant_disconnected">The shortcut assistant is unavailable. Enable it again, then resume the batch.</string>
+    <string name="individual_batch_approve_manually">Approve this shortcut in your launcher. If you dismiss it, return here to retry or skip it.</string>
+    <string name="individual_batch_preparing">Preparing app shortcuts…</string>
+    <string name="individual_batch_notification_channel">Adding app shortcuts</string>
+    <string name="individual_batch_notification_title">Hail is adding app shortcuts</string>
+</resources>

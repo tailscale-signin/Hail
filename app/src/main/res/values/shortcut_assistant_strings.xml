@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shortcut_pin_assistant_name">Hail shortcut assistant</string>
+    <string name="shortcut_pin_assistant_summary">Approve individual Home screen icons during a batch you start</string>
+    <string name="shortcut_pin_assistant_description">After you start an app shortcut batch in Hail, this optional service reads your launcher’s Add to Home screen confirmation and taps its Add button for each selected app. It acts only while that batch is active and stops if it cannot identify the confirmation. It does not read other apps, collect or transmit screen contents, or grant permissions. You can stop the batch at any time or disable this service here. Some launchers require manual confirmation.</string>
+    <string name="shortcut_pin_assistant_disconnected">Shortcut assistant disconnected. Enable it in Accessibility settings, then resume the batch.</string>
+    <string name="shortcut_pin_assistant_interrupted">Shortcut assistant interrupted. Resume the batch when you are ready.</string>
+    <string name="shortcut_pin_assistant_locked">Batch paused because the screen locked. Unlock your device, then resume.</string>
+    <string name="shortcut_pin_assistant_unrecognized">The launcher’s Add confirmation could not be identified safely. Confirm it yourself or continue in manual mode.</string>
+    <string name="shortcut_pin_assistant_click_failed">The launcher did not accept the Add action. Confirm it yourself or retry this app.</string>
+    <string name="shortcut_pin_assistant_left_launcher">Batch paused because another screen opened. Return to Hail to resume.</string>
+    <string name="shortcut_pin_assistant_dismissed">The Add confirmation closed without an automatic approval. Return to Hail to resume or skip this app.</string>
+</resources>

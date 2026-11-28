@@ -33,7 +33,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.regex.Pattern
 
-/** Keeps the release-gate class name while exercising the replacement one-confirmation widget. */
+/** Preserve existing widget bindings and individual shortcut identities across app updates. */
 @RunWith(AndroidJUnit4::class)
 @SdkSuppress(minSdkVersion = 26)
 class BulkShortcutLauncherTest {
@@ -55,10 +55,10 @@ class BulkShortcutLauncherTest {
         assertTrue(condition())
     }
 
-    private fun openWidgetSettings() {
+    private fun openShortcutSettings() {
         await(By.res(context.packageName, "nav_settings")).click()
         await(By.text(context.getString(R.string.working_mode)))
-        val target = By.text(context.getString(R.string.all_apps_widget_add))
+        val target = By.text(context.getString(R.string.home_surfaces_repair))
         val x = device.displayWidth / 2
         for (page in 1..12) {
             if (device.hasObject(target)) break
@@ -76,21 +76,21 @@ class BulkShortcutLauncherTest {
         if (node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) != true) await(By.text(label)).click()
     }
 
-    @Test fun dismissRetryApproveAndRepeatFromSettings() {
+    @Test fun existingWidgetCanBeRestoredRefreshedAndAddedAgain() {
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val originalMode = HailData.workingMode
         val biometric = HailData.biometricLogin
         prefs.edit().putString(HailData.WORKING_MODE, HailData.MODE_DEFAULT).putBoolean(HailData.BIOMETRIC_LOGIN, false).commit()
         try {
             ActivityScenario.launch(MainActivity::class.java).use {
-                openWidgetSettings()
+                openShortcutSettings()
                 assertTrue("Fresh CI installation must have no widget", AllAppsWidget.widgetIds(context).isEmpty())
-                clickPreference(R.string.all_apps_widget_add)
+                instrumentation.runOnMainSync { AllAppsWidget.requestPin(context) }
                 await(approve)
                 device.pressBack()
-                await(By.text(context.getString(R.string.all_apps_widget_pending)))
+                await(By.text(context.getString(R.string.home_surfaces_repair)))
                 assertTrue(AllAppsWidget.widgetIds(context).isEmpty())
-                clickPreference(R.string.all_apps_widget_add)
+                instrumentation.runOnMainSync { AllAppsWidget.requestPin(context) }
                 await(approve).click()
                 waitFor { AllAppsWidget.widgetIds(context).size == 1 }
 
@@ -134,7 +134,7 @@ class BulkShortcutLauncherTest {
                 context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 await(By.res(context.packageName, "nav_settings"))
                 // MainActivity retains Settings and its scroll state on returning from the launcher.
-                if (!device.hasObject(By.text(context.getString(R.string.all_apps_widget_add)))) openWidgetSettings()
+                if (!device.hasObject(By.text(context.getString(R.string.home_surfaces_repair)))) openShortcutSettings()
                 val repair = By.text(context.getString(R.string.home_surfaces_repair))
                 for (page in 1..4) {
                     if (device.hasObject(repair)) break
