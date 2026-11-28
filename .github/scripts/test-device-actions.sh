@@ -8,7 +8,20 @@ if [[ ${GITHUB_ACTIONS:-} != true ]] || ! grep -Eq '\[(ro.kernel.qemu|ro.boot.qe
 fi
 sdk_tools="$ANDROID_HOME/build-tools/36.0.0"
 fixture_dir="$(mktemp -d)"
-trap 'rm -rf "$fixture_dir"' EXIT
+finish_device_suite() {
+    local status=$?
+    trap - EXIT
+    if [[ $status != 0 && -n ${report:-} ]]; then
+        if declare -F capture_runner_state >/dev/null; then
+            capture_runner_state runner-final-failure || true
+        fi
+        timeout 10s adb pull /sdcard/Android/data/com.aistra.hail.debug/files/verification-release \
+            "$report/release-ui-evidence" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$fixture_dir" || true
+    exit "$status"
+}
+trap finish_device_suite EXIT
 report=app/build/outputs/androidTest-results/connected/fixtures
 mkdir -p "$report"
 exec > >(tee "$report/setup.log") 2>&1
