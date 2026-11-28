@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shortcut_assistant_settings_title">Shortcut assistant</string>
+    <string name="shortcut_assistant_settings_ready">Enabled. Recognized launcher Add prompts are approved automatically during a shortcut batch you start.</string>
+    <string name="shortcut_assistant_settings_setup">One-time setup for automatic placement. Allow Hail in Android Accessibility settings. The assistant only acts on launcher shortcut confirmations during your active batch.</string>
+</resources>
