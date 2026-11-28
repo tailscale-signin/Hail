@@ -15,7 +15,11 @@ data class PendingShortcut(
     val confirmationObserved: Boolean = false,
     val automationClicked: Boolean = false,
     val confirmationDismissed: Boolean = false
-)
+) {
+    /** A successful Add click remains in flight even if the launcher omits its callback. */
+    internal val acceptanceObserved: Boolean get() =
+        approvalReceived || (confirmationObserved && automationClicked)
+}
 
 data class BatchState(
     val initialized: Boolean = false,
@@ -82,16 +86,17 @@ data class BatchState(
     /** A late callback may change approval fields while Resume is reading Android's pin list. */
     internal fun resumeWithPins(expectedBatch: String?, expectedRequest: String?, pinned: Set<String>,
                                 skip: Boolean, manual: Boolean, now: Long, retry: Boolean = false,
-                                approvedBeforeRead: Boolean = false): BatchState {
+                                acceptedBeforeRead: Boolean = false): BatchState {
         if (!canResume || batchId != expectedBatch || awaiting?.requestId != expectedRequest) return this
         val pending = awaiting
         val resumed = copy(status = BatchStatus.RUNNING, message = null, automatic = automatic && !manual)
         return when {
             current in pinned -> resumed.advance(if (pending != null) Outcome.ADDED else Outcome.EXISTING)
             skip -> resumed.advance(Outcome.SKIPPED)
-            // Preserve an approval that arrived during the read: Android's pin list may lag the
-            // callback. Reissuing it now could create another launcher icon with the same ID.
-            pending?.approvalReceived == true && !(retry && approvedBeforeRead) ->
+            // Android's pin list can lag either a callback or a successful assistant Add click.
+            // Resume must preserve both forms of acceptance, including a missing callback.
+            // Only an explicit Retry may replace evidence already seen before this read.
+            pending?.acceptanceObserved == true && !(retry && acceptedBeforeRead) ->
                 resumed.copy(awaiting = pending.copy(requestedAtElapsed = now))
             else -> resumed.copy(awaiting = null)
         }

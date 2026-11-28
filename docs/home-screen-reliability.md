@@ -25,7 +25,7 @@ Android still requires the user to enable the service. The first setup therefore
 - Locking the screen, changing launcher, disabling the assistant, unexpected screens, and storage errors stop automatic progression. Stale results and cancellation actions cannot mutate a different batch.
 - Existing individual shortcuts retain their stable package IDs and private Hail launch action. Refreshing shortcut metadata preserves those IDs.
 
-A launcher process restart normally retains its own pinned records. Clearing launcher data or restoring an incomplete launcher backup can erase its layout. Android's pinned-record API does not expose another launcher's private desktop coordinates, so Hail cannot reconstruct a deleted layout or prove that a stale record has a visible icon. **Refresh Home screen shortcuts** repairs surviving metadata; the individual app menu remains available for explicit re-placement.
+A launcher process restart normally retains its own pinned records. Clearing launcher data or restoring an incomplete launcher backup can erase its layout. Android's publisher-side pinned-record list includes pins held by any launcher; it does not identify which launcher holds each ID or expose private desktop coordinates. After switching launchers, the batch may therefore report an existing shortcut that has no icon in the current Home. **Refresh Home screen shortcuts** repairs surviving metadata. To place a missing icon explicitly, long-press that app in Hail Home and choose **Add to Home screen**. Hail keeps the same shortcut ID; requesting every existing ID again automatically could create duplicate icons.
 
 ## Nova backups and Android backups
 
@@ -41,7 +41,7 @@ For a Nova-only backup whose native records are gone:
 
 1. Keep the original Nova backup, install the same Hail edition and target apps in the correct Android profile, and make Nova the default Home app.
 2. Restore Hail's settings backup if needed. Recreate shortcuts with custom tags or actions first, using their original definitions. Tagged app-launch shortcuts share their package-name ID with the standard app shortcut; creating the standard shortcut first would lose the original tag behavior.
-3. Run **Add all apps to Home screen** to recreate the remaining standard app shortcut IDs. The batch skips IDs already recreated in the previous step.
+3. Run **Add all apps to Home screen** to recreate the remaining standard app shortcut IDs. The batch skips all IDs Android reports as pinned, including IDs held by another launcher. For an icon still missing in Nova, use the app's **Add to Home screen** action in Hail Home to request placement explicitly.
 4. Reapply the original Nova backup. Nova can match the restored native IDs to the positions saved in its file.
 
 This sequence follows the inspected Nova loader's lookup behavior; it still needs an actual Nova backup/restore device run before claiming end-to-end verification. It cannot recover positions after the only original backup is lost, restore a different Android profile's records, or guarantee repair when an older backup used different shortcut IDs. A same-device Nova restore with native pins still present is a separate case and should be captured with diagnostics if it fails.
@@ -56,6 +56,7 @@ The release gates exercise complete automatic batches on the Android 16 standard
 
 - [ShortcutManager pinning and launcher approval](https://developer.android.com/reference/android/content/pm/ShortcutManager)
 - [PinItemRequest and repeated placement of an existing shortcut](https://developer.android.com/reference/android/content/pm/LauncherApps.PinItemRequest)
+- [LauncherApps and separate pinned sets for each launcher](https://developer.android.com/reference/android/content/pm/LauncherApps)
 - [AccessibilityService lifecycle and configuration](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService)
 - [AOSP shortcut request validation](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/services/core/java/com/android/server/pm/ShortcutRequestPinProcessor.java)
 - [Nova official distribution channels](https://novalauncher.com/beta/)

@@ -61,6 +61,8 @@ object HShortcuts {
     val supportsPinning get() = ShortcutManagerCompat.isRequestPinShortcutSupported(app)
 
     fun pinnedIds(): Set<String> = if (HTarget.O) {
+        // Publisher-wide: Android includes pins held by any launcher, not just the current Home.
+        // An ID proves that a native record exists, not that Nova has a visible icon for it.
         // Read only the platform records needed for IDs; rebuilding every compat shortcut on each
         // item adds unnecessary intent/icon conversion work as a large batch grows.
         requireNotNull(app.getSystemService(ShortcutManager::class.java)) { "Shortcut service unavailable" }
