@@ -1,6 +1,7 @@
 package com.aistra.hail.ui.home
 
 import android.content.pm.ApplicationInfo
+import android.graphics.Color
 import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.ViewGroup
@@ -43,10 +44,11 @@ class PagerAdapter : ListAdapter<HomeRow, PagerAdapter.ViewHolder>(object : Diff
             root.setOnLongClickListener { onItemLongClickListener.onItemLongClick(row.info) }
             val ctx = root.context
             if (row.application != null) {
-                holder.iconJob = AppIconCache.loadIconBitmapAsync(ctx, row.application, myUserId, appIcon, row.grayscale && dim)
+                holder.iconJob = AppIconCache.loadIconBitmapAsync(ctx, row.application, myUserId, appIcon,
+                    row.grayscale && dim, darken = frozen)
             } else {
                 appIcon.setImageDrawable(ctx.packageManager.defaultActivityIcon)
-                appIcon.colorFilter = null
+                AppIconCache.applyFilter(appIcon, grayscale = row.grayscale && frozen, darken = frozen)
             }
             appName.text = buildString {
                 if (row.selected) append("✓ ")
@@ -54,14 +56,22 @@ class PagerAdapter : ListAdapter<HomeRow, PagerAdapter.ViewHolder>(object : Diff
                 if (row.whitelisted) append("🔒")
                 append(row.label)
             }
-            appName.isEnabled = !row.grayscale || !dim
+            // Frozen labels use explicit RGB brightness, without stacking the disabled palette's
+            // opacity reduction. Retained, uninstalled entries keep their separate presentation.
+            appName.isEnabled = !row.grayscale || row.state != AppInfo.State.NOT_INSTALLED
             appName.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
             val unavailable = row.state == AppInfo.State.NOT_FOUND
             appAvailability.isVisible = unavailable
             appAvailability.setText(com.aistra.hail.R.string.package_unavailable)
             // The check mark identifies selection while app names keep the normal theme colours.
             root.isSelected = row.selected
-            appName.setTextColor(holder.nameColors)
+            if (frozen) {
+                val color = holder.nameColors.getColorForState(appName.drawableState, holder.nameColors.defaultColor)
+                appName.setTextColor(Color.argb(Color.alpha(color), Color.red(color) / 2,
+                    Color.green(color) / 2, Color.blue(color) / 2))
+            } else {
+                appName.setTextColor(holder.nameColors)
+            }
             appName.setTextSize(TypedValue.COMPLEX_UNIT_SP, row.fontSize)
         }
     }
