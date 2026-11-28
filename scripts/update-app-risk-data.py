@@ -26,7 +26,9 @@ assert all(isinstance(name, str) and isinstance(entry.get("description"), str)
 folder = pathlib.Path(__file__).resolve().parents[1] / "app/src/main/assets/app-risk"
 folder.mkdir(parents=True, exist_ok=True)
 compressed = gzip.compress(raw, mtime=0)
-(folder / "uad_lists.json.gz").write_bytes(compressed)
+# AAPT automatically expands .gz assets and strips that suffix. Keep a distinct name.
+(folder / "uad_lists.json.gzip").write_bytes(compressed)
+(folder / "uad_lists.json.gz").unlink(missing_ok=True)
 metadata = {
     "source": url,
     "commit": args.commit,

@@ -26,7 +26,9 @@ Canta uses the Universal Android Debloater Next Generation list:
 - [UAD-ng GPL-3.0 license](https://github.com/Universal-Debloater-Alliance/universal-android-debloater-next-generation/blob/61fda8ba7b07aff0fb1351e705455ae3961fb868/LICENSE)
 
 The bundled snapshot contains 5,399 exact package entries: 3,018 Recommended, 1,160 Advanced,
-923 Expert and 298 Unsafe. The JSON and descriptions are unmodified and compressed with gzip.
+923 Expert and 298 Unsafe. The JSON and descriptions are unmodified and compressed with gzip
+in `app/src/main/assets/app-risk/uad_lists.json.gzip`. The `.gzip` suffix is intentional:
+Android's asset packager automatically expands `.gz` files and removes their suffix.
 `app/src/main/assets/app-risk/source.json` records the upstream commit, uncompressed SHA-256,
 category counts and source URL. The license is included beside the data and credited in About.
 No Canta application code is copied.
@@ -53,7 +55,9 @@ python3 scripts/update-app-risk-data.py FULL_40_CHARACTER_COMMIT_SHA
 ```
 
 The script validates the schema/categories, stores the unmodified JSON as a deterministic
-gzip asset, and records its provenance. Update `AppRisks.SOURCE_COMMIT`, the counts in this
+`.gzip` asset, and records its provenance. Update `AppRisks.SOURCE_COMMIT`, the counts in this
 document and the About attribution to match the reviewed import. Run `AppRiskTest` and
 `AppRiskPresentationTest`; the Android tests exercise the packaged catalog and recycled row
 colors, including selected/frozen critical apps and the removed inactive-profile label.
+Also inspect the built APK: it must contain `assets/app-risk/uad_lists.json.gzip`, and
+decompressing that ZIP entry must match the source SHA-256 and package count in `source.json`.

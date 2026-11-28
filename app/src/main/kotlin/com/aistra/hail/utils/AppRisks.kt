@@ -24,7 +24,8 @@ object AppRisks {
     // Loaded once, on the background list-refresh path. A damaged/missing asset fails to Unknown.
     private val classifier by lazy {
         val entries = runCatching {
-            val json = app.assets.open("app-risk/uad_lists.json.gz").use { input ->
+            // AAPT expands files ending in .gz and drops that suffix; .gzip preserves the asset bytes/name.
+            val json = app.assets.open("app-risk/uad_lists.json.gzip").use { input ->
                 GZIPInputStream(input).bufferedReader().use { JSONObject(it.readText()) }
             }
             buildMap {
