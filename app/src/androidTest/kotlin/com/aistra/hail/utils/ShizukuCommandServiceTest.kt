@@ -35,11 +35,13 @@ class ShizukuCommandServiceTest {
         assertEquals(identity.output, 0, identity.exitCode)
         assertEquals("2000", identity.output.trim())
 
+        // Android mksh's echo is built in. Exercise the same 960,000 bytes of pipe traffic
+        // without making process-startup throughput part of the output-draining assertion.
         val large = ShizukuCommandClient.execute(shell("""
             i=0
             while [ "${'$'}i" -lt 12000 ]; do
-                printf 'stdout-0123456789abcdefghijklmnopqrstuv\n'
-                printf 'stderr-0123456789abcdefghijklmnopqrstuv\n' >&2
+                echo 'stdout-0123456789abcdefghijklmnopqrstuv'
+                echo 'stderr-0123456789abcdefghijklmnopqrstuv' >&2
                 i=${'$'}((i + 1))
             done
             exit 7

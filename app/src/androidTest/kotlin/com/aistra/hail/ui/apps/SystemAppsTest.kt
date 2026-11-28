@@ -15,6 +15,9 @@ import androidx.preference.PreferenceManager
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleCallback
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.UiDevice
@@ -27,7 +30,6 @@ import com.aistra.hail.app.HailApi
 import com.aistra.hail.app.HailData
 import com.aistra.hail.ui.main.MainActivity
 import com.aistra.hail.ui.api.InternalActionActivity
-import androidx.lifecycle.Lifecycle
 import com.aistra.hail.ui.home.HomeRow
 import com.aistra.hail.ui.home.PagerAdapter
 import com.aistra.hail.utils.HPackages
@@ -41,6 +43,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import rikka.shizuku.Shizuku
 import java.util.regex.Pattern
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(AndroidJUnit4::class)
 class SystemAppsTest {
@@ -310,9 +315,31 @@ class SystemAppsTest {
                 val request = HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, pkg)
                     .putExtra(HailData.KEY_TAG, tag).setClass(ctx, InternalActionActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                ActivityScenario.launch<InternalActionActivity>(request).use { launch ->
-                    waitFor("The private no-launch action should finish without an error page") {
-                        launch.state == Lifecycle.State.DESTROYED
+                // ApiActivity replaces its incoming Intent with a validated action snapshot.
+                // ActivityScenario matches that mutable Intent and loses later lifecycle events;
+                // observe the actual launched instance instead, still requiring its destruction.
+                val lifecycle = ActivityLifecycleMonitorRegistry.getInstance()
+                val launched = AtomicReference<InternalActionActivity?>()
+                val destroyed = CountDownLatch(1)
+                val observer = ActivityLifecycleCallback { activity, stage ->
+                    if (activity is InternalActionActivity) {
+                        if (stage == Stage.PRE_ON_CREATE && activity.intent.getStringExtra(HailData.KEY_PACKAGE) == pkg) {
+                            launched.compareAndSet(null, activity)
+                        }
+                        if (activity === launched.get() && stage == Stage.DESTROYED) destroyed.countDown()
+                    }
+                }
+                try {
+                    scenario.onActivity {
+                        lifecycle.addLifecycleCallback(observer)
+                        it.startActivity(request)
+                    }
+                    assertTrue("The private no-launch action should finish without an error page",
+                        destroyed.await(12, TimeUnit.SECONDS))
+                } finally {
+                    instrumentation.runOnMainSync {
+                        lifecycle.removeLifecycleCallback(observer)
+                        launched.get()?.takeUnless { it.isDestroyed || it.isFinishing }?.finish()
                     }
                 }
                 assertEquals(PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER, pm.getApplicationEnabledSetting(pkg))
