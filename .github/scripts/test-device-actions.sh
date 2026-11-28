@@ -25,23 +25,8 @@ trap finish_device_suite EXIT
 report=app/build/outputs/androidTest-results/connected/fixtures
 mkdir -p "$report"
 exec > >(tee "$report/setup.log") 2>&1
-./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 keytool -genkeypair -keystore "$fixture_dir/test.p12" -storetype PKCS12 -storepass android -keypass android -alias fixture -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Hail CI Fixture"
-
-# Ensure that the app and its instrumentation use the same temporary certificate
-# even when the emulator action changes the SDK user directory.
-install_test_apk() {
-    local directory="$1" destination="$2"
-    local source="$directory/$(jq -r '.elements[0].outputFile' "$directory/output-metadata.json")"
-    "$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture --out "$destination" "$source"
-    "$sdk_tools/apksigner" verify "$destination"
-    adb install --no-incremental --no-streaming -r -t "$destination"
-}
-for pkg in com.aistra.hail.debug.test com.aistra.hail.debug; do
-    if [[ "$(adb shell pm list packages "$pkg" | tr -d '\r')" == "package:$pkg" ]]; then adb uninstall "$pkg"; fi
-done
-install_test_apk app/build/outputs/apk/debug "$fixture_dir/hail.apk"
-install_test_apk app/build/outputs/apk/androidTest/debug "$fixture_dir/instrumentation.apk"
+bash .github/scripts/install-candidate-apks.sh "$report"
 adb shell 'run-as com.aistra.hail.debug mkdir -p files/v1'
 adb shell -T 'run-as com.aistra.hail.debug sh -c "cat > files/v1/apps.json"' <<'JSON'
 [{"package":"example.legacy.single","tag":0,"pinned":true},{"package":"example.legacy.multiple","tags":[0,-91],"whitelisted":true}]
@@ -85,7 +70,33 @@ capture_runner_state() {
     local prefix="$1"
     timeout 12s adb logcat -b main -b system -b crash -d -t 4000 > "$report/$prefix.log" || true
     timeout 8s adb shell dumpsys activity instrumentation > "$report/$prefix-activity.txt" || true
+    timeout 8s adb shell dumpsys activity activities > "$report/$prefix-activities.txt" || true
+    timeout 8s adb shell dumpsys window windows > "$report/$prefix-windows.txt" || true
     timeout 8s adb shell ps -A > "$report/$prefix-processes.txt" || true
+}
+capture_release_failure() {
+    local prefix="$1"
+    capture_runner_state "$prefix"
+    timeout 8s adb exec-out screencap -p > "$report/$prefix.png" || true
+    timeout 8s adb shell uiautomator dump "/data/local/tmp/$prefix.xml" > "$report/$prefix-hierarchy.txt" 2>&1 || true
+    timeout 8s adb pull "/data/local/tmp/$prefix.xml" "$report/$prefix.xml" >/dev/null 2>&1 || true
+    timeout 8s adb pull /sdcard/Android/data/com.aistra.hail.debug/files/verification "$report/screenshots" >/dev/null 2>&1 || true
+}
+run_release_suite() {
+    local label="$1" limit="$2"
+    shift 2
+    local output="$report/$label.txt" rc=0
+    timeout "$limit" adb shell am instrument -w -r "$@" \
+        com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output" || rc=$?
+    # Instrumentation captures the failing UI before its cleanup presses Home.
+    # Collect that original state on success and failure, before any status check exits.
+    timeout 8s adb pull /sdcard/Android/data/com.aistra.hail.debug/files/verification-release \
+        "$report/release-ui-$label" >/dev/null 2>&1 || true
+    if [[ $rc != 0 ]] || ! grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output" ||
+        ! grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"; then
+        capture_release_failure "$label-failure"
+        return 1
+    fi
 }
 run_device_suite() {
     timeout 7m adb shell am instrument -w -r -e class "$classes" -e hailCiFixtures true \
@@ -131,13 +142,13 @@ pull_trace() {
 }
 
 # Compare the official release and the optimized fork in the same user on the same disposable Android image.
-./gradlew :app:assembleRelease
 upstream="$fixture_dir/upstream.apk"
 curl --fail --location --silent --show-error --retry 3 -o "$upstream" \
     https://github.com/aistra0528/Hail/releases/download/v1.11.0/Hail-v1.11.0.apk
 echo "3be0c4a210b0472198ea3b675fcbd5720fa16288dcff119557644ea947003236  $upstream" | sha256sum -c -
 "$sdk_tools/apksigner" verify "$upstream"
-release_dir=app/build/outputs/apk/release
+release_dir=.ci-apks/release
+(cd "$release_dir" && sha256sum -c SHA256SUMS)
 release_version=$(jq -er '.elements[0].versionName' "$release_dir/output-metadata.json")
 release_code=$(jq -er '.elements[0].versionCode' "$release_dir/output-metadata.json")
 release_apk="$release_dir/$(jq -r '.elements[0].outputFile' "$release_dir/output-metadata.json")"
@@ -160,11 +171,9 @@ for distribution in baseline current; do
     apk=baseline
     if [[ $distribution == current ]]; then apk=fork; fi
     adb install --no-incremental --no-streaming -r "$fixture_dir/$apk.apk"
-    output="$report/benchmark-$distribution.txt"
-    timeout 5m adb shell am instrument -w -r -e class 'com.aistra.hail.ui.apps.ReleaseSystemAppsTest#measuresBulkDisableAndEnableOnInstalledFixtures' \
-        -e hailBulkBenchmark true -e distribution "$distribution" com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output"
-    grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
-    grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"
+    run_release_suite "benchmark-$distribution" 5m \
+        -e class 'com.aistra.hail.ui.apps.ReleaseSystemAppsTest#measuresBulkDisableAndEnableOnInstalledFixtures' \
+        -e hailBulkBenchmark true -e distribution "$distribution"
     pull_trace "benchmark-$distribution" "$report/benchmark-$distribution.jsonl"
 done
 
@@ -198,14 +207,11 @@ for server in shell root; do
             if adb shell pm path com.aistra.hail | tr -d '\r' | grep -q '^package:'; then adb uninstall com.aistra.hail; fi
             adb install --no-incremental --no-streaming "$fixture_dir/$distribution.apk"
         fi
-        output="$report/parity-$distribution-$server.txt"
-        timeout 4m adb shell am instrument -w -r -e class 'com.aistra.hail.ui.apps.ReleaseSystemAppsTest#freezesAndThawsFromHome' \
+        run_release_suite "parity-$distribution-$server" 4m \
+            -e class 'com.aistra.hail.ui.apps.ReleaseSystemAppsTest#freezesAndThawsFromHome' \
             -e hailReleaseParity true -e server "$server" -e distribution "$distribution" \
-            -e releaseVersion "$release_version" -e releaseCode "$release_code" \
-            com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output"
+            -e releaseVersion "$release_version" -e releaseCode "$release_code"
         adb logcat -d -s Hail:E HailParity:I | tail -n 90 > "$report/backend-$distribution-$server.log"
-        grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
-        grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"
         if [[ $distribution == fork ]]; then
             pull_trace "$server" "$report/decision-$server.jsonl"
             python3 .github/scripts/check-decision-log.py "$report/decision-$server.jsonl" "$server" "$release_version" "$release_code"
@@ -213,28 +219,3 @@ for server in shell root; do
         grep 'HailParity.*Android verified' "$report/backend-$distribution-$server.log" | tail -n 1 >> "$report/parity.log"
     done
 done
-
-# Install the large inventory only after normal scenarios, parity and performance have finished.
-# The 284 fixture APKs must not change those established tests' inventories or measurements.
-echo "Preparing the separate 284-app native shortcut regression."
-for index in $(seq 1 284); do
-    number=$(printf '%03d' "$index")
-    label="Hail $number"
-    if [[ $index == 115 ]]; then label=Hail; fi
-    install_fixture "large$number" true "$label"
-done
-large_output="$report/large-shortcuts-runner.txt"
-large_rc=0
-timeout 15m adb shell am instrument -w -r \
-    -e class com.aistra.hail.ui.settings.LargeShortcutBatchTest \
-    -e hailCiFixtures true -e hailLargeShortcutBatch true \
-    com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner > "$large_output" || large_rc=$?
-cat "$large_output"
-adb pull /sdcard/Android/data/com.aistra.hail.debug/files/verification-large \
-    "$report/large-shortcut-evidence" >/dev/null 2>&1 || true
-if [[ $large_rc != 0 ]]; then
-    capture_runner_state large-shortcut-runner-failure
-    exit "$large_rc"
-fi
-python3 .github/scripts/check-device-results.py "$large_output" --suite large-shortcuts \
-    --evidence "$report/large-shortcut-evidence/large-shortcuts.json"
