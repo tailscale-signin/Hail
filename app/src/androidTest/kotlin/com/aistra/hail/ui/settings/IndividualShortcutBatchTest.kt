@@ -363,6 +363,7 @@ class IndividualShortcutBatchTest {
             appendLine("assistantComponent=${assistant.flattenToString()}")
             appendLine("assistantEnabled=${runCatching { ShortcutPinAccessibilityService.isEnabled(context) }}")
             appendLine("assistantConnected=${runCatching { ShortcutPinAccessibilityService.isConnected() }}")
+            appendLine("assistantDiagnostics=${runCatching { ShortcutPinAccessibilityService.diagnosticState() }}")
             appendLine("uiAutomationFlags=${Configurator.getInstance().uiAutomationFlags}")
             for (key in listOf(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, Settings.Secure.ACCESSIBILITY_ENABLED)) {
                 appendLine("$key=${runCatching { Settings.Secure.getString(context.contentResolver, key) }}")

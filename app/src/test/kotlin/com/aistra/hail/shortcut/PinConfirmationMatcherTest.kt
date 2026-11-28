@@ -3,6 +3,7 @@ package com.aistra.hail.shortcut
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.util.Locale
 
 class PinConfirmationMatcherTest {
     private val launcher = "com.example.launcher"
@@ -47,6 +48,24 @@ class PinConfirmationMatcherTest {
         assertEquals(3, match())
         val translated = screen().toMutableList().apply { set(3, get(3).copy(text = "Zum Startbildschirm hinzufügen")) }
         assertEquals(3, match(translated, spec.copy(addLabels = setOf("Zum Startbildschirm hinzufügen"))))
+    }
+
+    @Test fun acceptsLauncherResourceAllCapsTransformationWithoutGeneralTextMatching() {
+        // Captured Android 16 Launcher3: the resource is mixed case, but TextView's accessible
+        // button text is ADD TO HOME SCREEN. Publisher and target keep their exact original labels.
+        val labels = PinConfirmationMatcher.localizedButtonLabels("Add to home screen", Locale.US)
+        val actual = screen().map { if (it.key == 3) it.copy(text = "ADD TO HOME SCREEN") else it }
+        assertEquals(3, match(actual, spec.copy(addLabels = labels)))
+        assertNull(match(actual.map { if (it.key == 3) it.copy(text = "Add") else it }, spec.copy(addLabels = labels)))
+        assertNull(match(actual.map { if (it.key == 0) it.copy(text = "HAIL") else it }, spec.copy(addLabels = labels)))
+        assertNull(match(actual + actual.last().copy(key = 4), spec.copy(addLabels = labels)))
+    }
+
+    @Test fun allCapsVariantsUseResourceLocaleIncludingExpandingCharacters() {
+        assertEquals(setOf("hinzufügen straße", "HINZUFÜGEN STRASSE"),
+            PinConfirmationMatcher.localizedButtonLabels("hinzufügen straße", Locale.GERMAN))
+        assertEquals(setOf("ekle işlemi", "EKLE İŞLEMİ"),
+            PinConfirmationMatcher.localizedButtonLabels("ekle işlemi", Locale.forLanguageTag("tr")))
     }
 
     @Test fun rejectsOtherPackagesAndUnresolvedActivities() {

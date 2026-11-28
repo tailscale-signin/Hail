@@ -22,6 +22,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 /**
  * An optional, user-enabled assistant for one explicit shortcut batch. It never starts a batch,
@@ -37,6 +38,9 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
     private var clickedWindow: ConfirmationWindow? = null
     private var departure: Departure? = null
     private var inspecting = false
+    private var lastEventClass: String? = null
+    private var lastEventWindow: Int? = null
+    private var lastRootWindow: Int? = null
 
     private data class ConfirmationWindow(val id: Int, val activity: String)
     private data class Departure(val windowId: Int, val packageName: String, val since: Long)
@@ -58,6 +62,8 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
         updateSubscription(request)
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val activity = event.className?.toString()
+            lastEventClass = activity?.take(128)
+            lastEventWindow = event.windowId
             if (activity != null && activity in request.confirmationActivities) {
                 confirmationWindow = ConfirmationWindow(event.windowId, activity)
             }
@@ -90,9 +96,13 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
         confirmationWindow = null
         clickedWindow = null
         departure = null
+        lastEventClass = null
+        lastEventWindow = null
+        lastRootWindow = null
         spec = request?.let(::loadSpec)
         setEventSubscription(request?.launcherPackage)
         if (request != null) {
+            diagnose("subscribed")
             polling = scope.launch {
                 while (ShortcutBatchController.currentAutomationRequest()?.requestId == request.requestId) {
                     inspectCurrentConfirmation()
@@ -113,6 +123,7 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun loadSpec(request: PendingShortcut): PinConfirmationSpec {
         val resources = runCatching { packageManager.getResourcesForApplication(request.launcherPackage) }.getOrNull()
         fun resourceName(name: String): Set<String> {
@@ -122,7 +133,12 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
         }
         val addId = resources?.getIdentifier("add_to_home_screen", "string", request.launcherPackage) ?: 0
         val addLabels = if (addId == 0) emptySet() else
-            runCatching { setOf(resources!!.getString(addId)) }.getOrDefault(emptySet())
+            runCatching {
+                val configuration = resources!!.configuration
+                val locale = if (Build.VERSION.SDK_INT >= 24) configuration.locales[0] ?: Locale.getDefault()
+                    else configuration.locale ?: Locale.getDefault()
+                PinConfirmationMatcher.localizedButtonLabels(resources.getString(addId), locale)
+            }.getOrDefault(emptySet())
         return PinConfirmationSpec(
             launcherPackage = request.launcherPackage,
             confirmationActivities = request.confirmationActivities,
@@ -148,7 +164,12 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
         inspecting = true
         val nodes = mutableListOf<AccessibilityNodeInfo>()
         try {
-            val root = rootInActiveWindow ?: return
+            val root = rootInActiveWindow
+            lastRootWindow = root?.windowId
+            if (root == null) {
+                diagnose("no-active-root")
+                return
+            }
             nodes += root
             val rootPackage = root.packageName?.toString()
             val clicked = clickedWindow
@@ -161,10 +182,13 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
                         val now = SystemClock.elapsedRealtime()
                         if (previous?.windowId != root.windowId || previous.packageName != rootPackage) {
                             departure = Departure(root.windowId, rootPackage, now)
+                            diagnose("click-departure-settling")
                         } else if (now - previous.since >= DISMISS_SETTLE_MS) {
+                            diagnose("click-confirmation-dismissed")
                             ShortcutBatchController.automationConfirmationDismissed(request.requestId)
                         }
                     } else {
+                        diagnose("click-left-launcher")
                         pauseIfActive(R.string.shortcut_pin_assistant_left_launcher)
                     }
                 } else {
@@ -176,6 +200,7 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
             // Only package/window metadata is inspected outside the chosen launcher. Never traverse
             // another app's hierarchy or retain its text.
             if (rootPackage != request.launcherPackage) {
+                diagnose(if (rootPackage == packageName) "waiting-in-hail" else "other-active-package")
                 if (confirmationWindow != null && rootPackage != packageName) {
                     pauseIfActive(R.string.shortcut_pin_assistant_left_launcher)
                 } else if (SystemClock.elapsedRealtime() - request.requestedAtElapsed >= MATCH_TIMEOUT_MS) {
@@ -185,6 +210,7 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
             }
             val window = confirmationWindow
             if (window == null || root.windowId != window.id) {
+                diagnose(if (window == null) "missing-confirmation-activity-event" else "confirmation-window-changed")
                 if (window != null) {
                     pauseIfActive(R.string.shortcut_pin_assistant_dismissed)
                 } else if (SystemClock.elapsedRealtime() - request.requestedAtElapsed >= MATCH_TIMEOUT_MS) {
@@ -200,12 +226,14 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
                 // Do not use gestures or a false accessibility-tool declaration to work around a
                 // launcher that protects its confirmation as sensitive accessibility data.
                 if (Build.VERSION.SDK_INT >= 34 && node.isAccessibilityDataSensitive) {
+                    diagnose("sensitive-node")
                     pauseIfActive(R.string.shortcut_pin_assistant_unrecognized)
                     return
                 }
                 snapshot += node.describe(index)
                 for (child in 0 until node.childCount) {
                     if (nodes.size >= MAX_NODES) {
+                        diagnose("node-limit")
                         pauseIfActive(R.string.shortcut_pin_assistant_unrecognized)
                         return
                     }
@@ -214,7 +242,9 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
                 index++
             }
             val expected = spec ?: return
-            val candidateIndex = PinConfirmationMatcher.findAddButton(expected, window.activity, rootPackage, snapshot)
+            val match = PinConfirmationMatcher.inspect(expected, window.activity, rootPackage, snapshot)
+            diagnose("${match.diagnostic};nodes=${snapshot.size}")
+            val candidateIndex = match.buttonKey
             if (candidateIndex == null) {
                 if (SystemClock.elapsedRealtime() - request.requestedAtElapsed >= MATCH_TIMEOUT_MS) {
                     pauseIfActive(R.string.shortcut_pin_assistant_unrecognized)
@@ -228,21 +258,36 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
             snapshot[candidateIndex] = candidate.describe(candidateIndex)
             if (PinConfirmationMatcher.findAddButton(expected, window.activity, rootPackage, snapshot) != candidateIndex) return
             ShortcutBatchController.confirmationObserved(request.requestId)
-            if (!ShortcutBatchController.claimAutomationClick(request.requestId)) return
+            if (!ShortcutBatchController.claimAutomationClick(request.requestId)) {
+                diagnose("click-claim-rejected")
+                return
+            }
             clickedWindow = window
             if (!candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                diagnose("click-action-rejected")
                 clickedWindow = null
                 ShortcutBatchController.releaseAutomationClick(request.requestId)
                 pauseIfActive(R.string.shortcut_pin_assistant_click_failed)
+            } else {
+                diagnose("clicked-waiting-for-dismissal")
             }
         } catch (_: RuntimeException) {
             // A launcher may replace a window during a Binder read. Preserve the queue and require
             // explicit resumption instead of guessing which screen now owns a button.
+            diagnose("window-read-failed")
             pauseIfActive(R.string.shortcut_pin_assistant_unrecognized)
         } finally {
             nodes.forEach { it.recycle() }
             inspecting = false
         }
+    }
+
+    /** Transient, bounded troubleshooting metadata. Never stores screen text, labels, or hierarchy. */
+    private fun diagnose(reason: String) {
+        diagnostic = ("$reason;eventClass=${lastEventClass ?: "none"};eventWindow=$lastEventWindow;" +
+            "confirmedWindow=${confirmationWindow?.id};rootWindow=$lastRootWindow;" +
+            "publisherIds=${spec?.publisherViewIds?.size ?: 0};targetIds=${spec?.targetViewIds?.size ?: 0};" +
+            "addLabels=${spec?.addLabels?.size ?: 0}").take(768)
     }
 
     private fun AccessibilityNodeInfo.describe(key: Int) = PinUiNode(
@@ -268,8 +313,10 @@ class ShortcutPinAccessibilityService : AccessibilityService() {
         private const val MATCH_TIMEOUT_MS = 15_000L
         private const val MAX_NODES = 256
         @Volatile private var connected = false
+        @Volatile private var diagnostic = "idle"
 
         fun isConnected(): Boolean = connected
+        fun diagnosticState(): String = diagnostic
 
         fun isEnabled(context: Context): Boolean {
             val component = ComponentName(context, ShortcutPinAccessibilityService::class.java)
