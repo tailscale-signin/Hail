@@ -43,6 +43,7 @@ import com.aistra.hail.extensions.*
 import com.aistra.hail.ui.main.MainFragment
 import com.aistra.hail.ui.failureDetails
 import com.aistra.hail.ui.showActionFeedback
+import com.aistra.hail.ui.FreezeFeedback
 import com.aistra.hail.ui.theme.AppTheme
 import com.aistra.hail.utils.*
 import com.aistra.hail.work.HWork
@@ -231,12 +232,6 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             else selectedList.add(info)
             showSelection()
             updateBarTitle()
-            return
-        }
-        if (pagerAdapter.currentList.find { it.info == info }?.state?.unavailable == true) {
-            DecisionLog.begin("home", "inspect_unavailable", pkg = info.packageName)?.event("launch_unavailable", info.packageName,
-                "reason" to "Home row has no current-user installation evidence")
-            binding.root.showActionFeedback(getString(R.string.unavailable_app_inline))
             return
         }
         launchApp(info.packageName)
@@ -503,14 +498,16 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                     trace?.skipped(packageName, "Home is no longer in the foreground")
                     return@launch
                 }
-                if (target == null) binding.root.showActionFeedback(getString(R.string.activity_not_found))
-                else {
+                if (target != null) {
                     startActivity(target)
                     trace?.event("activity_started", packageName)
                     app.recordLaunch(packageName)
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
+                trace?.event("launch_unavailable", packageName, "reason" to "No current-user installation evidence")
+                _binding?.root?.showActionFeedback(getString(R.string.unavailable_app_inline))
             } catch (e: RuntimeException) {
                 trace?.error("launch_failed", packageName, e)
                 _binding?.root?.showActionFeedback(e.localizedMessage ?: getString(R.string.activity_not_found))
@@ -557,7 +554,10 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                         HailData.saveApps()
                     }
                 }
-                if (_binding === origin) origin.root.showActionFeedback(result.failureDetails(frozen))
+                if (_binding === origin) {
+                    origin.root.showActionFeedback(result.failureDetails(frozen))
+                    if (frozen && isResumed) FreezeFeedback.show(result, origin.root)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: RuntimeException) {

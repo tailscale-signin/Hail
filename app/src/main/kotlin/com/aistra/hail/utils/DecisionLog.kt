@@ -7,6 +7,8 @@ import androidx.preference.PreferenceManager
 import com.aistra.hail.BuildConfig
 import com.aistra.hail.HailApp.Companion.app
 import com.aistra.hail.app.HailData
+import com.aistra.hail.shortcut.ShortcutBatchController
+import com.aistra.hail.shortcut.ShortcutPinAccessibilityService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -135,8 +137,14 @@ object DecisionLog {
     }
 
     suspend fun export(uri: Uri) {
+        // Serialize with normal initialization and its AtomicFile recovery. A separate store reader
+        // could otherwise race the first durable write after the controller is initialized.
+        val batchInitializationError = runCatching { ShortcutBatchController.initialize(app) }.exceptionOrNull()
         // Snapshot the bounded files on the writer queue before handing data to the chosen document provider.
         val snapshot = withContext(dispatcher) {
+            // Include durable progress even if recording was enabled only after a shortcut stall.
+            // Do not export the entire package inventory or any accessibility screen contents.
+            val batchSnapshot = ShortcutBatchController.state.value
             val header = JSONObject().apply {
                 put("format", "Hail decision log")
                 put("schema", 1)
@@ -155,6 +163,31 @@ object DecisionLog {
                 put("recordingAtExport", enabled)
                 put("retentionBytes", 2 * SEGMENT_BYTES)
                 put("writeErrorsThisProcess", writeFailures)
+                batchSnapshot.takeIf { it.initialized && it.batchId != null }?.let { batch ->
+                    put("shortcutBatch", JSONObject().apply {
+                        put("batch", batch.batchId)
+                        put("status", batch.status.name)
+                        put("completed", batch.completed)
+                        put("total", batch.total)
+                        put("added", batch.added.size)
+                        put("existing", batch.existing.size)
+                        put("skipped", batch.skipped.size)
+                        put("automatic", batch.automatic)
+                        put("launcher", batch.launcherPackage)
+                        put("reason", batch.message ?: JSONObject.NULL)
+                        batch.awaiting?.let { pending ->
+                            put("pendingPackage", pending.packageName)
+                            put("request", pending.requestId)
+                            put("approved", pending.approvalReceived)
+                            put("observed", pending.confirmationObserved)
+                            put("clicked", pending.automationClicked)
+                            put("dismissed", pending.confirmationDismissed)
+                        }
+                        put("assistantConnected", ShortcutPinAccessibilityService.isConnected())
+                        put("assistantDiagnostic", ShortcutPinAccessibilityService.diagnosticState().take(768))
+                    })
+                }
+                batchInitializationError?.let { put("shortcutSnapshotError", it.javaClass.simpleName) }
             }
             listOf((header.toString() + "\n").toByteArray(Charsets.UTF_8)) +
                 listOf(previous, current).filter { it.exists() }.map { it.readBytes() }

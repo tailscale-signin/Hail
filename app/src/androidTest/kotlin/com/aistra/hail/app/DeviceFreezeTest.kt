@@ -32,7 +32,46 @@ class DeviceFreezeTest {
     @Test fun privateDefaultsAndBrandResourcesArePackaged() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val pm = context.packageManager
-        assertEquals(0, context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP)
+        assertTrue("Android may back up native shortcut metadata",
+            context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP != 0)
+        val androidNamespace = "http://schemas.android.com/apk/res/android"
+        var applicationChecked = false
+        context.assets.openXmlResourceParser("AndroidManifest.xml").use { manifest ->
+            while (manifest.next() != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                if (manifest.eventType == org.xmlpull.v1.XmlPullParser.START_TAG && manifest.name == "application") {
+                    assertFalse("App files remain excluded from legacy automatic backup",
+                        manifest.getAttributeBooleanValue(androidNamespace, "fullBackupContent", true))
+                    assertEquals(com.aistra.hail.R.xml.data_extraction_rules,
+                        manifest.getAttributeResourceValue(androidNamespace, "dataExtractionRules", 0))
+                    assertNull("No key/value backup agent may bypass the file exclusions",
+                        manifest.getAttributeValue(androidNamespace, "backupAgent"))
+                    applicationChecked = true
+                }
+            }
+        }
+        assertTrue(applicationChecked)
+        val domains = setOf("root", "file", "database", "sharedpref", "external",
+            "device_root", "device_file", "device_database", "device_sharedpref")
+        val exclusions = mutableMapOf<String, MutableSet<String>>()
+        context.resources.getXml(com.aistra.hail.R.xml.data_extraction_rules).use { rules ->
+            var transport: String? = null
+            while (rules.next() != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                if (rules.eventType != org.xmlpull.v1.XmlPullParser.START_TAG) continue
+                when (rules.name) {
+                    "cloud-backup", "device-transfer" -> {
+                        transport = rules.name
+                        exclusions.getOrPut(rules.name) { mutableSetOf() }
+                    }
+                    "include" -> fail("Private app data must not be automatically included")
+                    "exclude" -> {
+                        assertEquals(".", rules.getAttributeValue(null, "path"))
+                        exclusions.getValue(requireNotNull(transport)).add(rules.getAttributeValue(null, "domain"))
+                    }
+                }
+            }
+        }
+        assertEquals(setOf("cloud-backup", "device-transfer"), exclusions.keys)
+        exclusions.values.forEach { assertEquals(domains, it) }
         assertEquals(PackageManager.PERMISSION_DENIED, pm.checkPermission(Manifest.permission.INTERNET, context.packageName))
         val internal = android.content.ComponentName(context, com.aistra.hail.ui.api.InternalActionActivity::class.java)
         assertFalse(pm.getActivityInfo(internal, 0).exported)
@@ -49,7 +88,7 @@ class DeviceFreezeTest {
                             android.content.res.Configuration.UI_MODE_NIGHT_YES)) {
             config.uiMode = (config.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK.inv()) or mode
             val themed = context.createConfigurationContext(config)
-            assertEquals(android.graphics.Color.rgb(24, 24, 24), themed.getColor(com.aistra.hail.R.color.md_theme_background))
+            assertEquals(android.graphics.Color.rgb(12, 12, 12), themed.getColor(com.aistra.hail.R.color.md_theme_background))
             assertEquals(themed.getColor(com.aistra.hail.R.color.md_theme_background),
                 themed.getColor(com.aistra.hail.R.color.md_theme_surface))
             assertEquals(android.graphics.Color.rgb(238, 238, 238), themed.getColor(com.aistra.hail.R.color.md_theme_onSurface))

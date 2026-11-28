@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shizuku_connection">Shizuku connection</string>
+    <string name="shizuku_connection_stopped">Not connected. Tap to open Shizuku, start it, then return to Hail.</string>
+    <string name="shizuku_connection_permission">Connected; Hail needs permission. Tap to authorize.</string>
+    <string name="shizuku_connection_denied">Permission denied. Tap to open Shizuku and allow Hail in Authorized applications.</string>
+    <string name="shizuku_connection_unsupported">This Shizuku service is too old. Update Shizuku, then return to Hail.</string>
+    <string name="shizuku_connection_shell">Connected as ADB shell. Android decides which package changes this profile allows.</string>
+    <string name="shizuku_connection_root">Connected as root. Package changes still apply to this Android profile.</string>
+    <string name="shizuku_connection_other">Connected. Package changes use the permissions granted to the Shizuku service.</string>
+    <string name="shizuku_permission_incomplete">Shizuku authorization was not completed. Tap the connection row to try again.</string>
+</resources>

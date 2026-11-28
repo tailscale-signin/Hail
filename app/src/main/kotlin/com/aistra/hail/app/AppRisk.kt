@@ -17,14 +17,24 @@ enum class RiskLevel {
 
 enum class EssentialRole { ANDROID_CORE, HOME, INPUT_METHOD, DEVICE_ADMIN }
 enum class AppNameTone { NORMAL, SYSTEM, CRITICAL }
+enum class RiskEvidence { UNLISTED, COMMUNITY_LIST, DEVICE_ROLE, SYSTEM_UID, CORE_PACKAGE_GUARD }
 
-data class CommunityRisk(val level: RiskLevel, val description: String)
+data class CommunityRisk(
+    val level: RiskLevel,
+    val description: String,
+    val dependencies: List<String> = emptyList(),
+    val neededBy: List<String> = emptyList()
+)
 
 data class AppRisk(
     val level: RiskLevel = RiskLevel.UNKNOWN,
     val system: Boolean = false,
     val essentialRole: EssentialRole? = null,
-    val communityDescription: String? = null
+    val communityDescription: String? = null,
+    val evidence: RiskEvidence = RiskEvidence.UNLISTED,
+    val communityLevel: RiskLevel? = null,
+    val dependencies: List<String> = emptyList(),
+    val neededBy: List<String> = emptyList()
 ) {
     val nameTone: AppNameTone get() = when {
         level == RiskLevel.UNSAFE -> AppNameTone.CRITICAL
@@ -48,7 +58,17 @@ class AppRiskClassifier(private val community: Map<String, CommunityRisk>) {
             level = if (essential != null) RiskLevel.UNSAFE else entry?.level ?: RiskLevel.UNKNOWN,
             system = system,
             essentialRole = essential,
-            communityDescription = entry?.description
+            communityDescription = entry?.description,
+            evidence = when {
+                essential != null && essential != EssentialRole.ANDROID_CORE -> RiskEvidence.DEVICE_ROLE
+                system && systemUid -> RiskEvidence.SYSTEM_UID
+                essential == EssentialRole.ANDROID_CORE -> RiskEvidence.CORE_PACKAGE_GUARD
+                entry != null -> RiskEvidence.COMMUNITY_LIST
+                else -> RiskEvidence.UNLISTED
+            },
+            communityLevel = entry?.level,
+            dependencies = entry?.dependencies.orEmpty(),
+            neededBy = entry?.neededBy.orEmpty()
         )
     }
 
@@ -64,4 +84,21 @@ class AppRiskClassifier(private val community: Map<String, CommunityRisk>) {
             "com.android.networkstack.permissionconfig", "com.android.shell"
         )
     }
+}
+
+/** Unknown is an absence of evidence, not a low-risk score, in either sort direction. */
+object AppRiskOrdering {
+    private fun rank(level: RiskLevel, unsafeFirst: Boolean): Int = when (level) {
+        RiskLevel.RECOMMENDED -> if (unsafeFirst) 3 else 0
+        RiskLevel.CAUTION -> if (unsafeFirst) 2 else 1
+        RiskLevel.RISKY -> if (unsafeFirst) 1 else 2
+        RiskLevel.UNSAFE -> if (unsafeFirst) 0 else 3
+        RiskLevel.UNKNOWN -> 4
+    }
+
+    fun <T> comparator(unsafeFirst: Boolean, risk: (T) -> RiskLevel, tieBreaker: Comparator<T>): Comparator<T> =
+        Comparator { first, second ->
+            val result = rank(risk(first), unsafeFirst).compareTo(rank(risk(second), unsafeFirst))
+            if (result == 0) tieBreaker.compare(first, second) else result
+        }
 }

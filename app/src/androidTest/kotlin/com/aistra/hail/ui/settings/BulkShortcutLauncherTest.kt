@@ -2,7 +2,12 @@ package com.aistra.hail.ui.settings
 
 import android.appwidget.AppWidgetManager
 import android.content.Intent
+import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
+import android.content.pm.LauncherApps
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.drawable.BitmapDrawable
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.preference.PreferenceManager
@@ -22,6 +27,7 @@ import com.aistra.hail.app.HailData
 import com.aistra.hail.ui.api.InternalActionActivity
 import com.aistra.hail.ui.main.MainActivity
 import com.aistra.hail.utils.HShortcuts
+import com.aistra.hail.utils.HPackages
 import com.aistra.hail.widget.AllAppsWidget
 import com.aistra.hail.widget.AllAppsWidgetCatalog
 import com.aistra.hail.widget.AllAppsWidgetFactory
@@ -201,6 +207,87 @@ class BulkShortcutLauncherTest {
             assertEquals("com.android.settings", pinned.intent?.getStringExtra(HailData.KEY_PACKAGE))
             assertEquals(InternalActionActivity::class.java.name, pinned.intent?.component?.className)
             assertTrue(pinned.isEnabled)
+        }
+    }
+
+    @Test fun repairsRestoredAppTagAndGlobalIconsWithoutChangingTheirIdentities() {
+        val manager = requireNotNull(context.getSystemService(ShortcutManager::class.java))
+        val prefix = "restore-repair-${SystemClock.elapsedRealtime()}"
+        val tag = "Preserved shortcut tag"
+        val requests = linkedMapOf(
+            "$prefix-app" to HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, "com.android.settings")
+                .putExtra(HailData.KEY_TAG, tag),
+            "$prefix-tag" to HailApi.getIntentForTag(HailApi.ACTION_FREEZE_TAG, tag),
+            "$prefix-global" to Intent(HailApi.ACTION_LOCK)
+        )
+        val wideBitmap = Bitmap.createBitmap(1024, 512, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.MAGENTA) }
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                requests.forEach { (id, request) ->
+                    scenario.onActivity {
+                        HShortcuts.addPinShortcut(BitmapDrawable(context.resources, wideBitmap), id, id, request)
+                    }
+                    await(approve).click()
+                    waitFor { manager.pinnedShortcuts.any { it.id == id } }
+                    context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    await(By.res(context.packageName, "nav_settings"))
+                }
+                val beforeIds = manager.pinnedShortcuts.map { it.id }.toSet()
+                // System restore can deliver pins before their target APK. Do not report a
+                // complete repair or replace that pin's metadata with a generic placeholder.
+                val appId = requests.keys.first()
+                val original = manager.pinnedShortcuts.single { it.id == appId }
+                val missingPackage = "${context.packageName}.restore_missing_${SystemClock.elapsedRealtime()}"
+                assertNull(HPackages.getApplicationInfoOrNull(missingPackage))
+                val missingIntent = Intent(requireNotNull(original.intent))
+                    .putExtra(HailData.KEY_PACKAGE, missingPackage)
+                fun replaceAppIntent(intent: Intent) = manager.updateShortcuts(listOf(
+                    ShortcutInfo.Builder(context, appId).setShortLabel(original.shortLabel ?: appId)
+                        .setIntent(intent).build()
+                ))
+                assertTrue(replaceAppIntent(missingIntent))
+                try {
+                    assertFalse("A target APK that has not restored must leave repair retryable",
+                        HShortcuts.refreshPinnedAppShortcuts(regenerateIcons = true))
+                    val pending = manager.pinnedShortcuts.single { it.id == appId }
+                    assertEquals(missingPackage, pending.intent?.getStringExtra(HailData.KEY_PACKAGE))
+                    assertEquals(tag, pending.intent?.getStringExtra(HailData.KEY_TAG))
+                    assertEquals(original.shortLabel.toString(), pending.shortLabel.toString())
+                } finally {
+                    assertTrue(replaceAppIntent(requireNotNull(original.intent)))
+                }
+                assertTrue(HShortcuts.refreshPinnedAppShortcuts(regenerateIcons = true))
+                val repaired = manager.pinnedShortcuts.associateBy { it.id }
+                assertEquals("Repair must not add or remove native pins", beforeIds, repaired.keys)
+                requests.forEach { (id, request) ->
+                    val pin = repaired.getValue(id)
+                    assertEquals(request.action, pin.intent?.action)
+                    assertEquals(request.getStringExtra(HailData.KEY_PACKAGE), pin.intent?.getStringExtra(HailData.KEY_PACKAGE))
+                    assertEquals(request.getStringExtra(HailData.KEY_TAG), pin.intent?.getStringExtra(HailData.KEY_TAG))
+                    assertEquals(InternalActionActivity::class.java.name, pin.intent?.component?.className)
+                    assertTrue(pin.isEnabled)
+                }
+                // Use Android's actual stored icon, not the input builder. The distinct wide
+                // placeholder makes replacement observable for app, tag and global shortcuts.
+                val automation = instrumentation.uiAutomation
+                automation.adoptShellPermissionIdentity("android.permission.ACCESS_SHORTCUTS")
+                try {
+                    val apps = requireNotNull(context.getSystemService(LauncherApps::class.java))
+                    requests.keys.forEach { id ->
+                        val icon = apps.getShortcutIconDrawable(repaired.getValue(id), context.resources.displayMetrics.densityDpi)
+                        assertTrue("A repaired bitmap icon must be stored for $id", icon is BitmapDrawable)
+                        val bitmap = (icon as BitmapDrawable).bitmap
+                        assertTrue(bitmap.width in 1..minOf(256, manager.iconMaxWidth))
+                        assertTrue(bitmap.height in 1..minOf(256, manager.iconMaxHeight))
+                        assertEquals("Repair replaces the wide placeholder with the action's square icon", bitmap.width, bitmap.height)
+                    }
+                } finally {
+                    automation.dropShellPermissionIdentity()
+                }
+                assertFalse("Metadata repair must not open another approval prompt", device.hasObject(approve))
+            }
+        } finally {
+            wideBitmap.recycle()
         }
     }
 }

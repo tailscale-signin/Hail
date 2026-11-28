@@ -5,7 +5,6 @@ import android.text.TextUtils
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.widget.CompoundButton
-import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.recyclerview.widget.DiffUtil
@@ -83,11 +82,8 @@ class AppsAdapter : ListAdapter<InstalledRow, AppsAdapter.ViewHolder>(DIFF) {
             binding.appName.apply {
                 val name = row.label
                 text = if (!row.grayscale && frozen) "❄️$name" else name
-                val riskColor = AppRiskPresentation.nameColor(row.risk)
-                // Safety colors remain visible when a package is frozen or retained for another profile.
-                isEnabled = riskColor != null || !row.grayscale || !frozen
-                if (riskColor != null) setTextColor(ContextCompat.getColor(context, riskColor))
-                else setTextColor(nameColors)
+                isEnabled = !row.grayscale || !frozen
+                setTextColor(nameColors)
             }
             binding.appDesc.apply {
                 text = pkg
@@ -95,7 +91,6 @@ class AppsAdapter : ListAdapter<InstalledRow, AppsAdapter.ViewHolder>(DIFF) {
             }
             binding.appRisk.apply {
                 text = AppRiskPresentation.label(context, row.risk)
-                setTextColor(ContextCompat.getColor(context, AppRiskPresentation.badgeColor(row.risk)))
             }
             binding.appRiskReason.apply {
                 text = AppRiskPresentation.explanation(context, row.risk)

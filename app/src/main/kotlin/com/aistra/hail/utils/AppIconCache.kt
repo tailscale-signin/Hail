@@ -20,7 +20,22 @@ object AppIconCache {
     private val loaders = mutableMapOf<Pair<Int, Boolean>, AppIconLoader>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val dispatcher = Dispatchers.IO.limitedParallelism(4)
-    private val grayscale = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) })
+    private val grayscaleFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) })
+    private val halfBrightness = ColorMatrix().apply { setScale(0.5f, 0.5f, 0.5f, 1f) }
+    private val darkFilter = ColorMatrixColorFilter(halfBrightness)
+    private val darkGrayscaleFilter = ColorMatrixColorFilter(ColorMatrix().apply {
+        setSaturation(0f)
+        postConcat(halfBrightness)
+    })
+
+    fun applyFilter(view: ImageView, grayscale: Boolean, darken: Boolean = false) {
+        view.colorFilter = when {
+            darken && grayscale -> darkGrayscaleFilter
+            darken -> darkFilter
+            grayscale -> grayscaleFilter
+            else -> null
+        }
+    }
 
     fun clear() {
         cache.evictAll()
@@ -32,10 +47,10 @@ object AppIconCache {
     }
 
     fun loadIconBitmapAsync(context: Context, info: ApplicationInfo, userId: Int, view: ImageView,
-                            setColorFilter: Boolean = false): Job = scope.launch {
+                            setColorFilter: Boolean = false, darken: Boolean = false): Job = scope.launch {
         val size = view.measuredWidth.takeIf { it > 0 } ?: context.resources.getDimensionPixelSize(R.dimen.app_icon_size)
         val key = Key(info.packageName, userId, size, HailData.iconPack, HailData.synthesizeAdaptiveIcons)
-        view.colorFilter = if (setColorFilter) grayscale else null
+        applyFilter(view, setColorFilter, darken)
         cache[key]?.let { view.setImageBitmap(it); return@launch }
         view.setImageDrawable(null)
         val bitmap = withContext(dispatcher) {

@@ -7,19 +7,19 @@ import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.UiScrollable
-import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import com.aistra.hail.R
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 import java.util.regex.Pattern
 
 /** Black-box driver. The original signed APK and the optimized fork run in their own uninstrumented process. */
@@ -34,7 +34,22 @@ class ReleaseSystemAppsTest {
     private fun res(name: String) = By.res(target, name)
 
     private fun await(selector: BySelector) = requireNotNull(device.wait(Until.findObject(selector), 12_000)) {
-        "Missing $selector in ${device.currentPackageName}: " + device.findObjects(By.text(Pattern.compile("(?s).+"))).take(24).map { it.text }
+        uiFailure("Missing $selector")
+    }
+
+    private fun uiFailure(message: String): String {
+        // Capture the failed screen before the test's finally block returns to the launcher.
+        // A diagnostic failure must not hide the original assertion.
+        runCatching {
+            val directory = requireNotNull(context.getExternalFilesDir("verification-release")).apply { mkdirs() }
+            val name = "ui-failure-${SystemClock.elapsedRealtime()}"
+            runCatching { device.dumpWindowHierarchy(File(directory, "$name.xml")) }
+            runCatching { device.takeScreenshot(File(directory, "$name.png")) }
+        }
+        val visible = runCatching {
+            "in ${device.currentPackageName}: " + device.findObjects(By.text(Pattern.compile("(?s).+"))).take(24).map { it.text }
+        }.getOrDefault("(UI details unavailable)")
+        return "$message $visible"
     }
 
     private fun menu(title: Int, id: String) {
@@ -84,16 +99,71 @@ class ReleaseSystemAppsTest {
         device.findObject(By.desc(context.getString(androidx.appcompat.R.string.abc_toolbar_collapse_description)))?.click()
     }
 
-    private fun settingsItem(id: Int) {
+    private fun settingsAction(id: Int): AccessibilityNodeInfo? {
         val label = context.getString(id)
-        if (device.findObject(By.text(label)) == null)
-            UiScrollable(UiSelector().scrollable(true)).scrollIntoView(UiSelector().text(label))
-        await(By.text(label)).click()
+        val root = host.uiAutomation.rootInActiveWindow ?: return null
+        if (root.packageName?.toString() != target) return null
+        // Compose's node provider does not implement findAccessibilityNodeInfosByText.
+        fun findLabel(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+            if (node.packageName?.toString() != target) return null
+            if (node.isVisibleToUser && node.text?.toString() == label) return node
+            for (index in 0 until node.childCount) {
+                val child = node.getChild(index) ?: continue
+                findLabel(child)?.let { return it }
+            }
+            return null
+        }
+        var node = findLabel(root)
+        while (node != null && node.packageName?.toString() == target && node.isVisibleToUser) {
+            if (node.isClickable) return node.takeIf { it.isEnabled }
+            node = node.parent
+        }
+        return null
+    }
+
+    private fun settingsItem(id: Int, expectedChecked: Boolean? = null) {
+        val selector = By.pkg(target).text(context.getString(id))
+        await(res("toolbar").hasDescendant(text(R.string.title_settings)))
+        // Lazy preferences have no accessibility node until they enter the viewport.
+        // Recheck after each gesture instead of trusting scrollIntoView's end-of-list result.
+        for (page in 1..12) {
+            if (device.hasObject(selector)) break
+            val bounds = await(By.pkg(target).scrollable(true)).visibleBounds
+            assertTrue("Settings list must be visible", bounds.width() > 0 && bounds.height() > 0)
+            assertTrue("Could not scroll Settings to ${context.getString(id)}", device.swipe(
+                bounds.centerX(), bounds.top + bounds.height() * 3 / 4,
+                bounds.centerX(), bounds.top + bounds.height() / 4, 30
+            ))
+            device.waitForIdle(1_000)
+        }
+        await(selector)
+        // The label can be a non-clickable child or partly clipped at the viewport edge.
+        // Activate the preference's own semantic action, without guessing a tap position.
+        val action = requireNotNull(settingsAction(id)) {
+            uiFailure("No enabled clickable Settings ancestor for ${context.getString(id)}")
+        }
+        if (expectedChecked != null) {
+            check(action.isCheckable && action.isChecked != expectedChecked) {
+                uiFailure("${context.getString(id)} must be checkable and ${!expectedChecked} before toggling")
+            }
+        }
+        check(action.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            uiFailure("Settings rejected the click on ${context.getString(id)}")
+        }
+        if (expectedChecked != null) {
+            val deadline = SystemClock.elapsedRealtime() + 12_000
+            do {
+                val current = settingsAction(id)
+                if (current?.isCheckable == true && current.isChecked == expectedChecked) return
+                SystemClock.sleep(100)
+            } while (SystemClock.elapsedRealtime() < deadline)
+            error(uiFailure("${context.getString(id)} did not become checked=$expectedChecked"))
+        }
     }
 
     private fun exportLog(server: String) {
         await(res("nav_settings")).click()
-        settingsItem(R.string.debug_logging) // Stop first; the captured failure must remain exportable.
+        settingsItem(R.string.debug_logging, expectedChecked = false) // Stop first; the captured failure must remain exportable.
         settingsItem(R.string.debug_export)
         val documents = Pattern.compile(".*documentsui")
         await(By.pkg(documents).clazz("android.widget.EditText")).text = "Hail-trace-$server.jsonl"
@@ -119,7 +189,7 @@ class ReleaseSystemAppsTest {
             context.startActivity(requireNotNull(pm.getLaunchIntentForPackage(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             if (baseline) configure(packages, systemApps = false)
             await(res("nav_settings")).click()
-            settingsItem(R.string.debug_logging)
+            settingsItem(R.string.debug_logging, expectedChecked = true)
             await(res("nav_home")).click()
             repeat(6) {
                 // Model a mixed workload: one running app and eleven that Android has already stopped.
@@ -180,7 +250,7 @@ class ReleaseSystemAppsTest {
             if (!upgrade) configure(packages, legacyFilterPrompt = !fork)
             if (fork) {
                 await(res("nav_settings")).click()
-                settingsItem(R.string.debug_logging)
+                settingsItem(R.string.debug_logging, expectedChecked = true)
                 // Restart the release process. Recording must resume from its persisted opt-in.
                 device.pressHome()
                 ParcelFileDescriptor.AutoCloseInputStream(host.uiAutomation.executeShellCommand("am force-stop $target")).use { it.readBytes() }

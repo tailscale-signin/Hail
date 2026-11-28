@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="apps_frozen_count">
+        <item quantity="one">%d app frozen</item>
+        <item quantity="other">%d apps frozen</item>
+    </plurals>
+</resources>

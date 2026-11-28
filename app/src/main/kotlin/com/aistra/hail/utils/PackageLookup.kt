@@ -21,12 +21,18 @@ class PackageLookup(private val mode: String, private val trace: DecisionTrace? 
     }
 
     fun find(pkg: String): UserPackage? {
-        shizuku?.let { service ->
+        val privileged = shizuku?.let { service ->
             val result = runCatching { service.find(pkg) }.onFailure { trace?.error("binder_lookup_failed", pkg, it) }.getOrNull()
             trace?.event("lookup", pkg, "reader" to "Shizuku IPackageManager", "found" to (result != null))
-            if (result != null) return result
+            if (result?.installed == true) return result
+            result
         }
-        val record = HPackages.findForUser(pkg, trace) { local[it] }
+        val localRecord = HPackages.findForUser(pkg, trace) { local[it] }
+        // A retained entry from one reader must not override another reader's positive,
+        // installed-only result for this same user. Preserve the privileged enabled override.
+        val record = if (localRecord?.installed == true) localRecord.copy(
+            enabledSetting = privileged?.enabledSetting ?: localRecord.enabledSetting
+        ) else privileged ?: localRecord
         return root?.get(pkg)?.let {
             trace?.event("lookup", pkg, "reader" to "root pm list packages", "found" to true, "enabled" to it)
             rootRecord(pkg, record, it)
@@ -59,21 +65,22 @@ class PackageLookup(private val mode: String, private val trace: DecisionTrace? 
             .onFailure { trace?.error("retained_inventory_failed", null, it) }.getOrNull() ?: return known
         return known.toMutableMap().apply {
             for (info in entries) {
-                if (info.packageName !in this && HPackages.isSystemApp(info)) {
-                    put(info.packageName, UserPackage(info, installed = false))
+                if (get(info.packageName)?.installed != true && HPackages.isSystemApp(info)) {
+                    // Recheck this user's direct package APIs before reporting a system
+                    // component absent when an OEM inventory did not include it.
+                    put(info.packageName, find(info.packageName) ?: UserPackage(info, installed = false))
                 }
             }
         }
     }
 
-    /** A complete privileged inventory plus retained metadata can settle absence without probing each package again. */
+    /** Reuse positive inventory evidence; recheck retained or missing entries before calling them absent. */
     fun fromInventory(pkg: String, forChange: Boolean = false): UserPackage? {
         val record = inventory[pkg]
-        if (record == null || (!record.installed && serviceInventory == null && root == null)) return find(pkg)
+        if (record?.installed != true) return find(pkg) ?: record
         trace?.event("lookup", pkg, "reader" to "current-user batch inventory", "installed" to record.installed)
         val service = shizuku
         if (!forChange || service == null) return record
-        if (!record.installed) return find(pkg) ?: record
         val setting = runCatching { service.setting(pkg) }.onFailure { trace?.error("binder_setting_failed", pkg, it) }.getOrNull()
         return record.copy(enabledSetting = setting)
     }

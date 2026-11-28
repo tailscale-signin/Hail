@@ -6,6 +6,7 @@ import androidx.work.WorkerParameters
 import com.aistra.hail.HailApp.Companion.app
 import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.HailData
+import com.aistra.hail.ui.FreezeFeedback
 import com.aistra.hail.services.AutoFreezeService
 import com.aistra.hail.utils.DecisionLog
 import com.aistra.hail.utils.HSystem
@@ -45,6 +46,7 @@ class AutoFreezeWorker(context: Context, params: WorkerParameters) : CoroutineWo
             }
         }
         val result = AppManager.changeFrozen(packages, true, includeLabel = false, mode = mode, trace = trace)
+        if (!screenOff) withContext(Dispatchers.Main.immediate) { FreezeFeedback.show(result) }
         app.setAutoFreezeService()
         if (result.failed.isEmpty()) Result.success() else Result.failure()
     }

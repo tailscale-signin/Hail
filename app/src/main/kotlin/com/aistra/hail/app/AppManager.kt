@@ -1,6 +1,7 @@
 package com.aistra.hail.app
 
 import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import com.aistra.hail.HailApp.Companion.app
@@ -34,6 +35,11 @@ object AppManager {
     private val mutations = Mutex()
     private val changed = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val changes = changed.asSharedFlow()
+
+    /** Backend reconnects invalidate package availability just like a completed package change. */
+    internal fun backendChanged() {
+        changed.tryEmit(Unit)
+    }
 
     fun isAppFrozen(info: ApplicationInfo, mode: String = HailData.workingMode): Boolean = when {
         mode.endsWith(HailData.STOP) -> info.flags and ApplicationInfo.FLAG_STOPPED != 0
@@ -286,8 +292,22 @@ object AppManager {
         return app.getString(if (frozen) R.string.msg_freeze else R.string.msg_unfreeze, display)
     }
 
+    /** Null is a confirmed installed component with no launch screen; actual lookup/launch failures still throw. */
     suspend fun prepareLaunch(pkg: String, mode: String = HailData.workingMode,
-                              trace: DecisionTrace? = DecisionLog.begin("app_manager", "launch", mode, pkg)): Intent? {
+                              trace: DecisionTrace? = DecisionLog.begin("app_manager", "launch", mode, pkg),
+                              beforeUnfreeze: suspend () -> Unit = {}): Intent? {
+        val hasLauncher = withContext(Dispatchers.IO) {
+            val record = PackageLookup(mode, trace).find(pkg)
+            if (record?.installed != true) throw PackageManager.NameNotFoundException(app.getString(R.string.app_not_installed))
+            HPackages.hasLauncherActivity(pkg, trace)
+        }
+        // A background system component is still installed and can be managed. A simple launch
+        // tap has nothing to open, so it must not thaw the component or an associated tag.
+        if (hasLauncher == false) {
+            trace?.skipped(pkg, "Installed package has no launcher activity; no launch changes requested")
+            return null
+        }
+        beforeUnfreeze()
         var thawed = false
         // Launching is the Android operation that clears a force-stop.
         if (mode.endsWith(HailData.STOP)) {
@@ -295,7 +315,8 @@ object AppManager {
         } else {
             trace?.event("launch_policy", pkg, "reason" to "Unfreeze before looking for a launcher activity")
             val result = changeFrozen(listOf(pkg), false, includeLabel = false, mode = mode, trace = trace)
-            if (pkg in result.missing || pkg in result.notInstalled || pkg in result.retainedSettings) return null
+            if (pkg in result.missing || pkg in result.notInstalled || pkg in result.retainedSettings)
+                throw PackageManager.NameNotFoundException(app.getString(R.string.app_not_installed))
             if (pkg in result.failed) throw IllegalStateException(resultMessage(result, false))
             thawed = pkg in result.changed
         }
@@ -311,7 +332,7 @@ object AppManager {
                 }
             }
             trace?.event("launch_ready", pkg, "launcherAvailable" to (intent != null))
-            intent
+            intent ?: throw ActivityNotFoundException(app.getString(R.string.activity_not_found))
         }
     }
 
@@ -347,23 +368,31 @@ object AppManager {
         }
     }
 
-    fun uninstallApp(packageName: String): Boolean = with(HailData.workingMode) {
-        if (
-            (startsWith(HailData.OWNER) && HPolicy.uninstallApp(packageName))
-            || (startsWith(HailData.DHIZUKU) && HDhizuku.uninstallApp(packageName))
-            || ((startsWith(HailData.SU) || startsWith(HailData.JAILBREAK)) && HShell.uninstallApp(packageName))
-            || (startsWith(HailData.SHIZUKU) && HShizuku.uninstallApp(packageName))
-        )
-            return true
-        HUI.startActivity(Intent.ACTION_DELETE, HPackages.packageUri(packageName))
-        false
+    suspend fun uninstallApp(packageName: String): Boolean {
+        val mode = HailData.workingMode
+        val removed = withContext(Dispatchers.IO) {
+            when {
+                mode.startsWith(HailData.OWNER) -> HPolicy.uninstallApp(packageName)
+                mode.startsWith(HailData.DHIZUKU) -> HDhizuku.uninstallApp(packageName)
+                mode.startsWith(HailData.SU) || mode.startsWith(HailData.JAILBREAK) -> HShell.uninstallApp(packageName)
+                mode.startsWith(HailData.SHIZUKU) -> HShizuku.uninstallApp(packageName)
+                else -> false
+            }
+        }
+        if (removed) return true
+        withContext(Dispatchers.Main.immediate) {
+            HUI.startActivity(Intent.ACTION_DELETE, HPackages.packageUri(packageName))
+        }
+        return false
     }
 
-    fun reinstallApp(packageName: String): Boolean = with(HailData.workingMode) {
-        when {
-            startsWith(HailData.SU) || startsWith(HailData.JAILBREAK) -> HShell.reinstallApp(packageName)
-            startsWith(HailData.SHIZUKU) -> HShizuku.reinstallApp(packageName)
-            else -> false
+    suspend fun reinstallApp(packageName: String): Boolean = withContext(Dispatchers.IO) {
+        with(HailData.workingMode) {
+            when {
+                startsWith(HailData.SU) || startsWith(HailData.JAILBREAK) -> HShell.reinstallApp(packageName)
+                startsWith(HailData.SHIZUKU) -> HShizuku.reinstallApp(packageName)
+                else -> false
+            }
         }
     }
 

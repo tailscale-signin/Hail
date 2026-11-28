@@ -6,13 +6,12 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
-import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.InputEvent
 import android.view.KeyEvent
 import androidx.annotation.RequiresApi
 import com.aistra.hail.BuildConfig
-import moe.shizuku.server.IShizukuService
+import com.aistra.hail.shizuku.PackageCommands
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuBinderWrapper
@@ -301,22 +300,12 @@ object HShizuku {
             HiddenApiBypass.invoke(it::class.java, it, "build")
         }
 
-    fun uninstallApp(packageName: String): Boolean =
-        execute("pm ${if (HPackages.canUninstallNormally(packageName)) "uninstall" else "uninstall --user current"} $packageName").first == 0
+    suspend fun uninstallApp(packageName: String): Boolean =
+        ShizukuCommandClient.execute(PackageCommands.uninstall(packageName, HPackages.myUserId)).exitCode == 0
 
-    fun reinstallApp(packageName: String): Boolean =
-        execute("pm install-existing --user current $packageName").first == 0
+    suspend fun reinstallApp(packageName: String): Boolean =
+        ShizukuCommandClient.execute(PackageCommands.reinstall(packageName, HPackages.myUserId)).exitCode == 0
 
-    fun execute(command: String, root: Boolean = isRoot): Pair<Int, String?> = runCatching {
-        IShizukuService.Stub.asInterface(Shizuku.getBinder()).newProcess(arrayOf(if (root) "su" else "sh"), null, null)
-            .run {
-                ParcelFileDescriptor.AutoCloseOutputStream(outputStream).use {
-                    it.write(command.toByteArray())
-                }
-                waitFor() to inputStream.text.ifBlank { errorStream.text }.also { destroy() }
-            }
-    }.getOrElse { 1 to it.stackTraceToString() }
-
-    private val ParcelFileDescriptor.text
-        get() = ParcelFileDescriptor.AutoCloseInputStream(this).bufferedReader().use { it.readText() }
+    suspend fun execute(command: String): Pair<Int, String?> =
+        ShizukuCommandClient.execute(listOf("/system/bin/sh", "-c", command)).asPair()
 }

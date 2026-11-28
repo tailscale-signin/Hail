@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="launcher_backup_restore_title">Restore a Nova backup</string>
+    <string name="launcher_backup_restore_summary">Missing Hail icons after restoring a launcher backup? Tap for the recovery steps.</string>
+    <string name="launcher_backup_restore_steps">1. Keep the original Nova backup. Install Hail and the target apps in the same Android profile, and select Nova as Home.\n2. Restore your Hail settings backup if needed. Recreate any shortcuts with custom tags or actions first, using their original settings.\n3. Use Add all apps to Home screen to recreate the remaining standard app shortcuts. If an app is reported as already added but its icon is missing in Nova, long-press that app in Hail Home and choose Add to Home screen. Android may still hold its shortcut for another launcher.\n4. Restore the original Nova backup again so Nova can match the shortcuts to their saved positions.\nRefresh Home screen shortcuts repairs icons and actions for records Android still has. A Nova backup alone cannot recreate a native shortcut that Android has lost.</string>
+</resources>

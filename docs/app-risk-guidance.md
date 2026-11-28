@@ -4,6 +4,13 @@ The Apps tab shows advisory package ratings offline, followed by the reason. Tap
 to expand or collapse it in place. No confirmation popup is added by the rating system.
 Package actions, permissions and freeze-mode behavior are independent of the displayed rating.
 
+An always-visible sort control above the Apps list offers **Risk · Recommended first** and
+**Risk · Unsafe first**, alongside the existing name/install/update choices. The former groups
+Recommended → Caution → Risky → Unsafe; the latter reverses those four categories. Unknown
+always stays last because missing evidence is not a safety rating. Each category sorts by
+locale-aware app name, then package name. Search and the user/system/frozen filters still apply.
+The chosen sort persists in the existing preference and travels with manual backups.
+
 | Upstream rating | Hail label | Meaning |
 | --- | --- | --- |
 | Recommended | Recommended | Community removal recommendation; required features can still vary by device. |
@@ -12,9 +19,8 @@ Package actions, permissions and freeze-mode behavior are independent of the dis
 | Unsafe | Unsafe | Known risk to essential functions or system stability. |
 | Missing or unrecognized | Unknown | Hail has no usable community assessment for this exact package. |
 
-System app names are yellow. Unsafe packages and essential device components are red,
-including while frozen, selected, or retained outside the current profile. Other app names
-use the normal theme color. These ratings describe disabling/removal risk; they are not
+App names and rating labels use the normal theme text colors, including system and unsafe apps.
+These ratings describe disabling/removal risk; they are not
 malware verdicts, proof of safety, or a claim that every unsafe package will cause a bootloop.
 
 ## Community source and attribution
@@ -32,6 +38,20 @@ Android's asset packager automatically expands `.gz` files and removes their suf
 `app/src/main/assets/app-risk/source.json` records the upstream commit, uncompressed SHA-256,
 category counts and source URL. The license is included beside the data and credited in About.
 No Canta application code is copied.
+
+The expanded explanation distinguishes Android-reported active roles and system identity,
+the exact core-package protection rule, and community classification. It includes the source
+snapshot and any community-listed dependencies or packages that depend on the app. The bundled
+snapshot has 43 entries with listed dependencies and 27 with listed dependents; these lists are
+not exhaustive and do not establish that those packages are installed on the current device.
+An info control beside the top sort expands this explanation of the ratings and links to the
+exact bundled upstream source. No permission prompt or test-disable operation is needed.
+
+The catalog's SHA-256, declared package count and source commit are checked against bundled
+provenance before community entries are used. Its uncompressed Git blob SHA-1 is
+`20d344aacb4ce1eea89f31ecb24015afaa8d363c`, matching the upstream file at the pinned commit.
+This proves the bundled data matches its reviewed source; it does not prove a package can be
+disabled safely on every device.
 
 The catalog is read once on the background refresh path. It requires no internet connection,
 does not upload installed-package names, and stays consistent for a released app version.
@@ -58,6 +78,6 @@ The script validates the schema/categories, stores the unmodified JSON as a dete
 `.gzip` asset, and records its provenance. Update `AppRisks.SOURCE_COMMIT`, the counts in this
 document and the About attribution to match the reviewed import. Run `AppRiskTest` and
 `AppRiskPresentationTest`; the Android tests exercise the packaged catalog and recycled row
-colors, including selected/frozen critical apps and the removed inactive-profile label.
+theme colors, including selected/frozen critical apps and the removed inactive-profile label.
 Also inspect the built APK: it must contain `assets/app-risk/uad_lists.json.gzip`, and
 decompressing that ZIP entry must match the source SHA-256 and package count in `source.json`.

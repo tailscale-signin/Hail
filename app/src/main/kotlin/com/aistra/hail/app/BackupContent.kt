@@ -40,7 +40,7 @@ class BackupContent(
         )
         private val choices get() = mapOf(
             HailData.APP_THEME to HailData.APP_THEME_VALUES,
-            HailData.SORT_BY to listOf(HailData.SORT_NAME, HailData.SORT_INSTALL, HailData.SORT_UPDATE),
+            HailData.SORT_BY to HailData.APP_SORT_VALUES,
             HailData.TILE_ACTION to HailData.TILE_ACTION_VALUES,
             HailData.DYNAMIC_SHORTCUT_ACTION to HailData.DYNAMIC_SHORTCUT_ACTIONS
         )

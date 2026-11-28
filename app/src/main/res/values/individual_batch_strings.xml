@@ -1,7 +1,7 @@
 <resources>
     <string name="individual_batch_title">Add individual app shortcuts</string>
     <string name="individual_batch_description">Add a separate Hail shortcut for every launchable app in this Android profile, including disabled apps. Each icon keeps Hail’s unfreeze-and-open action.</string>
-    <string name="individual_batch_assistant_explanation">For automatic adding, enable Hail’s shortcut assistant in Android Accessibility settings once. During a batch you start, it confirms only Hail’s Add shortcut prompts in your selected launcher. It stops when the batch ends, is paused or cancelled, or the screen locks. You can disable the assistant again at any time.</string>
+    <string name="individual_batch_assistant_explanation">For automatic adding, enable Hail’s shortcut assistant in Android Accessibility settings once. During a batch you start, it confirms only Hail’s Add shortcut prompts in your selected launcher and keeps the screen on while adding them. It stops when the batch ends, is paused or cancelled, or you lock the screen. You can disable the assistant again at any time.</string>
     <string name="individual_batch_enable_assistant">Enable shortcut assistant</string>
     <string name="individual_batch_assistant_connecting">Waiting for the shortcut assistant to connect…</string>
     <string name="individual_batch_start">Add all shortcuts</string>
@@ -27,7 +27,7 @@
     <string name="individual_batch_request_failed">The current shortcut could not be added. Check your launcher, then retry or skip this app.</string>
     <string name="individual_batch_service_failed">The batch could not start in the background. Return to this screen and try again.</string>
     <string name="individual_batch_storage_failed">Hail could not save batch progress. The batch has stopped. Free some storage and try again.</string>
-    <string name="individual_batch_waiting">No completed launcher approval was received. Existing shortcuts are preserved. Retry or skip this app when you are ready.</string>
+    <string name="individual_batch_waiting">The current launcher confirmation did not finish. Shortcuts already added are preserved. Resume checks them before continuing; retry or skip this app if needed.</string>
     <string name="individual_batch_cancelled">Batch cancelled. Shortcuts already added stay on your Home screen. A launcher prompt already on screen may still need to be dismissed.</string>
     <string name="individual_batch_assistant_disconnected">The shortcut assistant is unavailable. Enable it again, then resume the batch.</string>
     <string name="individual_batch_approve_manually">Approve this shortcut in your launcher. If you dismiss it, return here to retry or skip it.</string>

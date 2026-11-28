@@ -2,6 +2,7 @@ package com.aistra.hail.utils
 
 import android.app.ActivityManager
 import android.app.AppOpsManager
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
@@ -111,6 +112,32 @@ object HPackages {
     } ?: false
 
     fun isAppUninstalled(packageName: String): Boolean = findForUser(packageName)?.installed != true
+
+    /**
+     * Launchability is separate from installation and frozen state. Include disabled/hidden
+     * components so a normal frozen app can still be thawed and opened. Null means that Android
+     * could not answer; callers must not classify an unavailable query as a launcherless package.
+     */
+    @Suppress("DEPRECATION")
+    fun hasLauncherActivity(packageName: String, trace: DecisionTrace? = null): Boolean? = try {
+        val flags = INSTALLED_FOR_USER or INCLUDE_UNINSTALLED
+        val found = listOf(Intent.CATEGORY_INFO, Intent.CATEGORY_LAUNCHER).any { category ->
+            app.packageManager.queryIntentActivities(
+                Intent(Intent.ACTION_MAIN).addCategory(category).setPackage(packageName), flags
+            ).any { result ->
+                result.activityInfo?.let { activity ->
+                    activity.packageName == packageName && activity.exported &&
+                        (activity.enabled || activity.applicationInfo?.enabled == false)
+                } == true
+            }
+        }
+        trace?.event("launcher_capability", packageName, "hasLauncher" to found,
+            "includesDisabledComponents" to true)
+        found
+    } catch (failure: RuntimeException) {
+        trace?.error("launcher_capability_failed", packageName, failure)
+        null
+    }
 
     fun canUninstallNormally(packageName: String): Boolean =
         getApplicationInfoOrNull(packageName)?.sourceDir?.startsWith("/data") ?: false

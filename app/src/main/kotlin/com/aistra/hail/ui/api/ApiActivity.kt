@@ -1,6 +1,5 @@
 package com.aistra.hail.ui.api
 
-import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager.NameNotFoundException
 import androidx.fragment.app.FragmentActivity
@@ -45,6 +44,7 @@ import com.aistra.hail.app.HailApi
 import com.aistra.hail.app.HailData
 import com.aistra.hail.ui.theme.AppTheme
 import com.aistra.hail.ui.failureDetails
+import com.aistra.hail.ui.FreezeFeedback
 import com.aistra.hail.utils.*
 import com.aistra.hail.work.HWork.setAutoFreeze
 
@@ -134,7 +134,7 @@ open class ApiActivity : FragmentActivity() {
                 return false
             }
 
-            HailApi.ACTION_LAUNCH -> launchApp(requirePackage(), intent.getStringExtra(HailData.KEY_TAG)?.let { requireTagId })
+            HailApi.ACTION_LAUNCH -> launchApp(requirePackage(), intent.getStringExtra(HailData.KEY_TAG))
             HailApi.ACTION_FREEZE -> setAppFrozen(requirePackage(), true)
             HailApi.ACTION_UNFREEZE -> setAppFrozen(requirePackage(), false)
             HailApi.ACTION_FREEZE_TAG, HailApi.ACTION_UNFREEZE_TAG -> {
@@ -226,11 +226,16 @@ open class ApiActivity : FragmentActivity() {
                 ?: throw IllegalStateException("Tag unavailable:\n$it")
         } ?: throw IllegalArgumentException("Tag must not be null")
 
-    private suspend fun launchApp(pkg: String, tagId: Int? = null) {
+    private suspend fun launchApp(pkg: String, tagName: String? = null) {
         val mode = HailData.workingMode
         val trace = DecisionLog.begin(requestSource, "launch", mode, pkg)
-        if (tagId != null) setListFrozen(false, tagId = tagId, trace = trace)
-        val target = AppManager.prepareLaunch(pkg, mode, trace) ?: throw ActivityNotFoundException(getString(R.string.activity_not_found))
+        val target = AppManager.prepareLaunch(pkg, mode, trace) {
+            if (tagName != null) {
+                val tagId = HailData.tags.find { it.first == tagName }?.second
+                    ?: throw IllegalStateException("Tag unavailable:\n$tagName")
+                setListFrozen(false, tagId = tagId, trace = trace)
+            }
+        } ?: return
         try {
             startActivity(target)
             trace?.event("activity_started", pkg)
@@ -254,6 +259,7 @@ open class ApiActivity : FragmentActivity() {
         val result = AppManager.changeFrozen(listOf(pkg), frozen, trace = trace)
         if (pkg in result.missing || (!frozen && pkg in result.notInstalled)) throw NameNotFoundException(getString(R.string.app_not_installed))
         if (!result.reachedTarget(pkg, frozen)) throw IllegalStateException(result.failureDetails(frozen) ?: AppManager.resultMessage(result, frozen))
+        if (frozen) FreezeFeedback.show(result)
     }
 
     private suspend fun setListFrozen(
@@ -277,6 +283,7 @@ open class ApiActivity : FragmentActivity() {
             // A partially failed tag action must not prevent the requested launch or screen lock.
             partialFailure = listOfNotNull(partialFailure, it).joinToString("\n\n")
         }
+        if (frozen) FreezeFeedback.show(result)
     }
 
     private suspend fun lockScreen(freezeAll: Boolean) {

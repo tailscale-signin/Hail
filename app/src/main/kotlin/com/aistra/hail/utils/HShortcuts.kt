@@ -2,9 +2,13 @@ package com.aistra.hail.utils
 
 import android.content.Intent
 import android.content.IntentSender
+import android.content.pm.ApplicationInfo
+import android.content.pm.ShortcutManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.graphics.drawable.Drawable
+import android.os.Build
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
@@ -16,7 +20,9 @@ import com.aistra.hail.app.HailApi
 import com.aistra.hail.app.HailData
 import com.aistra.hail.ui.api.ApiActivity
 import com.aistra.hail.ui.api.InternalActionActivity
+import kotlinx.coroutines.CancellationException
 import me.zhanghai.android.appiconloader.AppIconLoader
+import kotlin.math.roundToInt
 
 object HShortcuts {
     // Legacy pin broadcasts launch as the home app and use the public confirmation screen.
@@ -44,9 +50,7 @@ object HShortcuts {
         label: CharSequence = info.name,
         intent: Intent = HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, info.packageName)
     ): ShortcutInfoCompat {
-        val icon = info.applicationInfo?.let {
-            IconCompat.createWithBitmap(IconPack.loadIcon(it.packageName) ?: iconLoader.loadIcon(it))
-        } ?: getDrawableIcon(app.packageManager.defaultActivityIcon)
+        val icon = appShortcutIcon(info.applicationInfo)
         return buildPinShortcut(icon, id, label.ifBlank { id }, intent)
     }
 
@@ -57,7 +61,12 @@ object HShortcuts {
     val supportsPinning get() = ShortcutManagerCompat.isRequestPinShortcutSupported(app)
 
     fun pinnedIds(): Set<String> = if (HTarget.O) {
-        ShortcutManagerCompat.getShortcuts(app, ShortcutManagerCompat.FLAG_MATCH_PINNED)
+        // Publisher-wide: Android includes pins held by any launcher, not just the current Home.
+        // An ID proves that a native record exists, not that Nova has a visible icon for it.
+        // Read only the platform records needed for IDs; rebuilding every compat shortcut on each
+        // item adds unnecessary intent/icon conversion work as a large batch grows.
+        requireNotNull(app.getSystemService(ShortcutManager::class.java)) { "Shortcut service unavailable" }
+            .pinnedShortcuts
             .mapTo(mutableSetOf()) { it.id }
     } else emptySet()
 
@@ -75,11 +84,7 @@ object HShortcuts {
         val applicationInfo = HPackages.getApplicationInfoOrNull(packageName)
         val shortcut =
             ShortcutInfoCompat.Builder(app, packageName.hashCode().toString()) // Make id different from pin
-                .setIcon(IconCompat.createWithBitmap(applicationInfo?.let {
-                    IconPack.loadIcon(it.packageName) ?: iconLoader.loadIcon(it)
-                } ?: getBitmapFromDrawable(
-                    app.packageManager.defaultActivityIcon
-                ))).setShortLabel(
+                .setIcon(appShortcutIcon(applicationInfo)).setShortLabel(
                     applicationInfo?.loadLabel(app.packageManager) ?: packageName
                 ).setIntent(HailApi.getIntentForPackage(HailApi.ACTION_LAUNCH, packageName).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT).setClass(app, shortcutActivity)).build()
         ShortcutManagerCompat.pushDynamicShortcut(app, shortcut)
@@ -128,33 +133,172 @@ object HShortcuts {
         ShortcutManagerCompat.removeAllDynamicShortcuts(app)
     }
 
-    /** Update existing launcher records in place. Never remove a pin because a package lookup is transiently absent. */
-    fun refreshPinnedAppShortcuts(): Boolean {
+    /**
+     * Update platform records that still exist, preserving their IDs and action arguments.
+     * Android restores shortcut metadata without bitmap icons. Foreground repair can regenerate
+     * those icons; it cannot recreate a record already removed by the launcher or the platform.
+     */
+    @Synchronized
+    fun refreshPinnedAppShortcuts(regenerateIcons: Boolean = false): Boolean {
         if (!HTarget.O) return true
-        val updates = ShortcutManagerCompat.getShortcuts(app, ShortcutManagerCompat.FLAG_MATCH_PINNED).mapNotNull { pin ->
-            val request = pin.intent ?: return@mapNotNull null
-            if (request.action != HailApi.ACTION_LAUNCH) return@mapNotNull null
-            val pkg = request.getStringExtra(HailData.KEY_PACKAGE) ?: return@mapNotNull null
-            val info = HPackages.getApplicationInfoOrNull(pkg) ?: return@mapNotNull null
-            // Preserve IDs, tags and icon data across upgrades. Omitting the icon retains its existing launcher icon
-            // and avoids sending hundreds of bitmaps in one Binder transaction.
-            ShortcutInfoCompat.Builder(app, pin.id)
-                .setShortLabel(info.loadLabel(app.packageManager).ifBlank { pkg })
-                .setIntent(Intent(request).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT)
-                    .setClass(app, InternalActionActivity::class.java)).build()
+        return try {
+            // Old backups can contain disabled records without an intent. Read the native
+            // nullable fields instead of forcing those records through the compat conversion.
+            val pins = requireNotNull(app.getSystemService(ShortcutManager::class.java)) {
+                "Shortcut service unavailable"
+            }.pinnedShortcuts
+            val updates = ArrayList<ShortcutInfoCompat>()
+            var complete = true
+            fun submit(): Boolean {
+                if (updates.isEmpty()) return true
+                val applied = ShortcutManagerCompat.updateShortcuts(app, updates)
+                updates.clear()
+                return applied
+            }
+            for (pin in pins) {
+                if (pin.isImmutable) continue
+                val request = pin.intent ?: continue
+                val action = try {
+                    HailApi.parse(request)
+                } catch (_: IllegalArgumentException) {
+                    // Unknown or malformed legacy records cannot safely be inferred from an ID.
+                    continue
+                }
+                val pkg = action.getStringExtra(HailData.KEY_PACKAGE)
+                val info = pkg?.let {
+                    if (regenerateIcons) HPackages.findForUser(it, listed = { null })
+                        ?.takeIf { target -> target.installed }?.info
+                    else HPackages.getApplicationInfoOrNull(it)
+                }
+                if (pkg != null && info == null) {
+                    // An app may not have finished installing during device restore. Preserve the
+                    // pin and report a partial repair so first-open repair can retry next time.
+                    if (regenerateIcons) complete = false
+                    continue
+                }
+                val label = if (action.action == HailApi.ACTION_LAUNCH && info != null) {
+                    info.loadLabel(app.packageManager).ifBlank { pkg ?: pin.id }
+                } else pin.shortLabel?.takeIf { it.isNotBlank() } ?: pin.id
+                val update = ShortcutInfoCompat.Builder(app, pin.id)
+                    .setShortLabel(label)
+                    .setIntent(Intent(request).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT)
+                        .setClass(app, InternalActionActivity::class.java))
+                if (regenerateIcons) {
+                    val icon = when (action.action) {
+                        HailApi.ACTION_LAUNCH, HailApi.ACTION_FREEZE, HailApi.ACTION_UNFREEZE,
+                        Intent.ACTION_SHOW_APP_INFO -> appShortcutIconOrNull(info)
+                        HailApi.ACTION_UNFREEZE_TAG, HailApi.ACTION_UNFREEZE_ALL ->
+                            actionShortcutIconOrNull(R.drawable.ic_round_unfrozen_shortcut)
+                        HailApi.ACTION_LOCK, HailApi.ACTION_LOCK_FREEZE ->
+                            actionShortcutIconOrNull(R.drawable.ic_outline_lock_shortcut)
+                        else -> actionShortcutIconOrNull(R.drawable.ic_round_frozen_shortcut)
+                    }
+                    if (icon == null) {
+                        // Keep the old icon and retry a failed decoder/resource on a later visit.
+                        complete = false
+                        continue
+                    }
+                    update.setIcon(icon)
+                }
+                updates.add(update.build())
+                // Two 256px ARGB icons use at most 512KiB before parcel overhead. Metadata-only
+                // refresh omits icons and retains the user's existing launcher image.
+                if (regenerateIcons && updates.size == ICON_REFRESH_BATCH_SIZE && !submit()) return false
+            }
+            submit() && complete
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RuntimeException) {
+            HLog.e(e)
+            false
         }
-        return updates.isEmpty() || ShortcutManagerCompat.updateShortcuts(app, updates)
     }
 
-    private fun getDrawableIcon(drawable: Drawable): IconCompat =
+    private fun actionShortcutIconOrNull(resource: Int): IconCompat? = loadIconOrNull {
+        AppCompatResources.getDrawable(app, resource)?.let {
+            IconCompat.createWithBitmap(getBitmapFromDrawable(it))
+        }
+    }
+
+    private fun appShortcutIcon(info: ApplicationInfo?): IconCompat =
+        appShortcutIconOrNull(info) ?: defaultShortcutIcon()
+
+    private fun appShortcutIconOrNull(info: ApplicationInfo?): IconCompat? = loadIconOrNull {
+        info?.let {
+            val bitmap = IconPack.loadIcon(it.packageName) ?: iconLoader.loadIcon(it)
+            IconCompat.createWithBitmap(boundedBitmap(bitmap))
+        }
+    }
+
+    private fun getDrawableIcon(drawable: Drawable): IconCompat = loadIconOrNull {
         IconCompat.createWithBitmap(getBitmapFromDrawable(drawable))
+    } ?: defaultShortcutIcon()
 
-    private fun getBitmapFromDrawable(drawable: Drawable): Bitmap = Bitmap.createBitmap(
-        drawable.intrinsicWidth, drawable.intrinsicHeight, Bitmap.Config.ARGB_8888
-    ).also {
-        with(Canvas(it)) {
-            drawable.setBounds(0, 0, width, height)
-            drawable.draw(this)
+    private fun defaultShortcutIcon(): IconCompat = loadIconOrNull {
+        IconCompat.createWithBitmap(getBitmapFromDrawable(app.packageManager.defaultActivityIcon))
+    } ?: IconCompat.createWithResource(app, R.mipmap.ic_launcher)
+
+    /** One broken icon must not stop all later apps in a bulk shortcut request. */
+    private inline fun loadIconOrNull(load: () -> IconCompat?): IconCompat? = try {
+        load()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: RuntimeException) {
+        HLog.e(e)
+        null
+    }
+
+    private fun iconLimits(): Pair<Int, Int> {
+        val fallback = (96 * app.resources.displayMetrics.density).roundToInt()
+            .coerceIn(1, MAX_ICON_EDGE)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) return fallback to fallback
+        return try {
+            val manager = app.getSystemService(ShortcutManager::class.java)
+            val width = manager?.iconMaxWidth?.takeIf { it > 0 } ?: fallback
+            val height = manager?.iconMaxHeight?.takeIf { it > 0 } ?: fallback
+            width.coerceAtMost(MAX_ICON_EDGE) to height.coerceAtMost(MAX_ICON_EDGE)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RuntimeException) {
+            HLog.e(e)
+            fallback to fallback
         }
     }
+
+    private fun boundedSize(width: Int, height: Int): Pair<Int, Int> {
+        val (maxWidth, maxHeight) = iconLimits()
+        // Some framework/default/vector drawables have no intrinsic size (-1).
+        val sourceWidth = width.takeIf { it > 0 } ?: maxWidth
+        val sourceHeight = height.takeIf { it > 0 } ?: maxHeight
+        val scale = minOf(1.0, maxWidth.toDouble() / sourceWidth, maxHeight.toDouble() / sourceHeight)
+        return (sourceWidth * scale).toInt().coerceAtLeast(1) to
+            (sourceHeight * scale).toInt().coerceAtLeast(1)
+    }
+
+    private fun boundedBitmap(bitmap: Bitmap): Bitmap {
+        val (width, height) = boundedSize(bitmap.width, bitmap.height)
+        val bounded = if (width == bitmap.width && height == bitmap.height) bitmap
+        else Bitmap.createScaledBitmap(bitmap, width, height, true)
+        // Wide-gamut bitmaps can use twice the bytes per pixel. Keep the parcel's pixel budget
+        // predictable even when an icon pack or decoder supplies RGBA_F16/HARDWARE bitmaps.
+        return if (bounded.config == Bitmap.Config.ARGB_8888) bounded
+        else requireNotNull(bounded.copy(Bitmap.Config.ARGB_8888, false))
+    }
+
+    private fun getBitmapFromDrawable(drawable: Drawable): Bitmap {
+        val (width, height) = boundedSize(drawable.intrinsicWidth, drawable.intrinsicHeight)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val previousBounds = Rect(drawable.bounds)
+        try {
+            drawable.setBounds(0, 0, width, height)
+            drawable.draw(Canvas(bitmap))
+        } finally {
+            drawable.bounds = previousBounds
+        }
+        return bitmap
+    }
+
+    // Even a launcher reporting an excessive maximum must not receive a multi-megabyte icon.
+    private const val MAX_ICON_EDGE = 256
+    private const val ICON_REFRESH_BATCH_SIZE = 2
 }

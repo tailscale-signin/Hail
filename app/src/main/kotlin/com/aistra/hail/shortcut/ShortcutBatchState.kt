@@ -15,7 +15,11 @@ data class PendingShortcut(
     val confirmationObserved: Boolean = false,
     val automationClicked: Boolean = false,
     val confirmationDismissed: Boolean = false
-)
+) {
+    /** A successful Add click remains in flight even if the launcher omits its callback. */
+    internal val acceptanceObserved: Boolean get() =
+        approvalReceived || (confirmationObserved && automationClicked)
+}
 
 data class BatchState(
     val initialized: Boolean = false,
@@ -67,11 +71,40 @@ data class BatchState(
     internal fun recordApproval(batch: String, request: String, pkg: String): BatchState =
         if (matches(batch, request, pkg)) copy(awaiting = awaiting!!.copy(approvalReceived = true)) else this
 
+    /** Readback is authoritative after approval or an observed, completed confirmation. */
+    internal val canCheckPendingPin: Boolean get() = awaiting?.let {
+        it.approvalReceived || (it.confirmationDismissed && (!automatic || it.automationClicked))
+    } == true
+
     /** A callback alone can arrive before the launcher finishes its confirmation window. */
     internal fun confirmPinned(pinned: Set<String>): BatchState {
         val pending = awaiting ?: return this
-        return if (active && pending.approvalReceived && (!automatic || pending.confirmationDismissed) &&
+        return if (active && canCheckPendingPin && (!automatic || pending.confirmationDismissed) &&
             pending.packageName == current && pending.packageName in pinned) advance(Outcome.ADDED) else this
+    }
+
+    /** A late callback may change approval fields while Resume is reading Android's pin list. */
+    internal fun resumeWithPins(expectedBatch: String?, expectedRequest: String?, pinned: Set<String>,
+                                skip: Boolean, manual: Boolean, now: Long, retry: Boolean = false,
+                                approvedBeforeRead: Boolean = false, clickedBeforeRead: Boolean = false): BatchState {
+        if (!canResume || batchId != expectedBatch || awaiting?.requestId != expectedRequest) return this
+        val pending = awaiting
+        val newAcceptance = pending?.let {
+            (it.approvalReceived && !approvedBeforeRead) ||
+                (it.confirmationObserved && it.automationClicked && !clickedBeforeRead)
+        } == true
+        val resumed = copy(status = BatchStatus.RUNNING, message = null, automatic = automatic && !manual)
+        return when {
+            current in pinned -> resumed.advance(if (pending != null) Outcome.ADDED else Outcome.EXISTING)
+            skip -> resumed.advance(Outcome.SKIPPED)
+            // Android's pin list can lag either a callback or a successful assistant Add click.
+            // Resume must preserve both forms of acceptance, including a missing callback.
+            // Only an explicit Retry may replace evidence already seen before this read. A new
+            // callback must survive Retry even when the preceding click was already known.
+            pending?.acceptanceObserved == true && (!retry || newAcceptance) ->
+                resumed.copy(awaiting = pending.copy(requestedAtElapsed = now))
+            else -> resumed.copy(awaiting = null)
+        }
     }
 
     internal enum class Outcome { ADDED, EXISTING, SKIPPED }

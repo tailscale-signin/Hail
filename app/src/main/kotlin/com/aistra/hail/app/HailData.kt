@@ -35,6 +35,9 @@ object HailData {
     const val SORT_NAME = "name"
     const val SORT_INSTALL = "install"
     const val SORT_UPDATE = "update"
+    const val SORT_RISK_RECOMMENDED = "risk_recommended"
+    const val SORT_RISK_UNSAFE = "risk_unsafe"
+    val APP_SORT_VALUES = listOf(SORT_NAME, SORT_RISK_RECOMMENDED, SORT_RISK_UNSAFE, SORT_INSTALL, SORT_UPDATE)
     const val FILTER_USER_APPS = "filter_user_apps"
     const val FILTER_SYSTEM_APPS = "filter_system_apps"
     const val FILTER_FROZEN_APPS = "filter_frozen_apps"

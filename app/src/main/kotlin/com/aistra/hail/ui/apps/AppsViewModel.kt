@@ -10,6 +10,7 @@ import com.aistra.hail.HailApp
 import com.aistra.hail.app.AppManager
 import com.aistra.hail.app.AppInfo
 import com.aistra.hail.app.AppRisk
+import com.aistra.hail.app.AppRiskOrdering
 import com.aistra.hail.app.HailData
 import com.aistra.hail.utils.*
 import java.text.Collator
@@ -107,7 +108,14 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
                     HailData.SORT_UPDATE -> rows.sortedByDescending { it.sortTime }
                     else -> {
                         val collator = Collator.getInstance()
-                        rows.sortedWith { a,b -> collator.compare(a.label,b.label) }
+                        val nameOrder = Comparator<InstalledRow> { first, second ->
+                            val labelOrder = collator.compare(first.label, second.label)
+                            if (labelOrder == 0) first.info.packageName.compareTo(second.info.packageName) else labelOrder
+                        }
+                        val ordering = if (sort == HailData.SORT_RISK_RECOMMENDED || sort == HailData.SORT_RISK_UNSAFE)
+                            AppRiskOrdering.comparator(sort == HailData.SORT_RISK_UNSAFE, { it.risk.level }, nameOrder)
+                        else nameOrder
+                        rows.sortedWith(ordering)
                     }
                 }
             }

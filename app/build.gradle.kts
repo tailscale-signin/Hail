@@ -25,8 +25,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 23
         targetSdk = 37
-        versionCode = 45
-        versionName = "1.13.8"
+        versionCode = 46
+        versionName = "1.13.9"
     }
 
     buildTypes {
@@ -57,7 +57,12 @@ android {
         // Do not compress the dex files, so the apk can be imported as a privileged app
         noCompress += "dex"
     }
+    compileOptions {
+        // Shizuku's listener APIs use Java collection methods unavailable on API 23.
+        isCoreLibraryDesugaringEnabled = true
+    }
     buildFeatures {
+        aidl = true
         viewBinding = true
         buildConfig = true
         compose = true
@@ -84,6 +89,7 @@ kotlin {
 }
 
 dependencies {
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.material3)

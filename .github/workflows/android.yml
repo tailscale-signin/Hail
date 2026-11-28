@@ -24,6 +24,9 @@ on:
       - '!.github/scripts/check-device-results.py'
       - '!.github/scripts/check-decision-log.py'
       - '!.github/scripts/check-bulk-performance.py'
+      - '!.github/scripts/test-nova-shortcuts.sh'
+      - '!.github/scripts/test-large-shortcuts.sh'
+      - '!.github/scripts/install-candidate-apks.sh'
 
 permissions:
   contents: read
@@ -33,7 +36,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  verify:
+  build_candidate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -45,13 +48,65 @@ jobs:
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           packages: 'platforms;android-37.2 build-tools;36.0.0'
-      - name: Test and build debug APK
-        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug
+      - name: Test and build the candidate once for every device gate
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease
+      - name: Record candidate APK checksums
+        run: |
+          for directory in app/build/outputs/apk/debug app/build/outputs/apk/androidTest/debug app/build/outputs/apk/release; do
+            (cd "$directory" && sha256sum *.apk > SHA256SUMS)
+          done
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: Hail-debug
-          path: app/build/outputs/apk/debug/*.apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/debug/output-metadata.json
+            app/build/outputs/apk/debug/SHA256SUMS
           if-no-files-found: error
+      - name: Upload matching debug instrumentation APK
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: Hail-debug-androidTest
+          path: |
+            app/build/outputs/apk/androidTest/debug/*.apk
+            app/build/outputs/apk/androidTest/debug/output-metadata.json
+            app/build/outputs/apk/androidTest/debug/SHA256SUMS
+          if-no-files-found: error
+      - name: Upload optimized unsigned APK for verification and offline release signing
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: Hail-unsigned-release
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/release/output-metadata.json
+            app/build/outputs/apk/release/SHA256SUMS
+          if-no-files-found: error
+
+  verify:
+    needs: build_candidate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platforms;android-37.2 build-tools;36.0.0'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Hail-debug
+          path: .ci-apks/debug
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Hail-debug-androidTest
+          path: .ci-apks/androidTest
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Hail-unsigned-release
+          path: .ci-apks/release
       - name: Enable emulator acceleration
         run: sudo chmod a+rw /dev/kvm
       - name: Test backup, shortcuts and package actions on Android 16
@@ -70,20 +125,92 @@ jobs:
           path: |
             app/build/reports/androidTests/connected/
             app/build/outputs/androidTest-results/connected/
-      - name: Verify optimized release build
-        if: ${{ !cancelled() }}
-        run: ./gradlew :app:assembleRelease
-      - name: Upload optimized unsigned APK for offline release signing
+
+  verify_shortcuts:
+    needs: build_candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platforms;android-36 build-tools;36.0.0'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Hail-debug
+          path: .ci-apks/debug
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Hail-debug-androidTest
+          path: .ci-apks/androidTest
+      - name: Enable emulator acceleration
+        run: sudo chmod a+rw /dev/kvm
+      - name: Verify 284 individual shortcuts with the system launcher
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 36
+          target: default
+          arch: x86_64
+          disable-animations: true
+          script: bash .github/scripts/test-large-shortcuts.sh default
+      - name: Upload system launcher verification evidence
+        if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: Hail-unsigned-release
-          path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
+          name: large-shortcut-test-report
+          path: app/build/outputs/androidTest-results/large-shortcuts/
+
+  verify_nova:
+    needs: build_candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platforms;android-36 build-tools;36.0.0'
+      - name: Download candidate debug APK from verification
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Hail-debug
+          path: .ci-apks/debug
+      - name: Download matching candidate instrumentation
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Hail-debug-androidTest
+          path: .ci-apks/androidTest
+      - name: Enable emulator acceleration
+        run: sudo chmod a+rw /dev/kvm
+      - name: Verify 284 individual shortcuts with official Nova on Android 16
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: bash .github/scripts/test-nova-shortcuts.sh
+      - name: Upload Nova launcher verification evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: nova-shortcut-test-report
+          path: app/build/outputs/androidTest-results/nova/
 
   release_readiness:
-    needs: verify
+    needs: [build_candidate, verify, verify_shortcuts, verify_nova]
     if: >-
+      needs.build_candidate.result == 'success' &&
       needs.verify.result == 'success' &&
+      needs.verify_shortcuts.result == 'success' &&
+      needs.verify_nova.result == 'success' &&
       github.repository == 'tailscale-signin/Hail' &&
       github.ref == 'refs/heads/main' &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish_release == true) ||
@@ -118,9 +245,12 @@ jobs:
           PYROUTE
 
   publish:
-    needs: [verify, release_readiness]
+    needs: [build_candidate, verify, verify_shortcuts, verify_nova, release_readiness]
     if: >-
+      needs.build_candidate.result == 'success' &&
       needs.verify.result == 'success' &&
+      needs.verify_shortcuts.result == 'success' &&
+      needs.verify_nova.result == 'success' &&
       needs.release_readiness.outputs.repository_signing == 'true' &&
       github.repository == 'tailscale-signin/Hail' &&
       github.ref == 'refs/heads/main' &&
@@ -292,7 +422,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: verify
+    needs: [verify, verify_shortcuts]
     if: ${{ github.event_name == 'push' && !startsWith(github.event.head_commit.message, '[skip ci]') && github.repository_owner == 'aistra0528' }}
     steps:
       - name: Checkout

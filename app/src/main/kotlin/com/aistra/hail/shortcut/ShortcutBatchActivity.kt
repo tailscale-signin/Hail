@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -113,6 +115,7 @@ class ShortcutBatchActivity : FragmentActivity() {
     }
 
     override fun onStop() {
+        ShortcutBatchController.activityFocusChanged(false)
         // Keep one authorization across the batch's launcher prompts, not across unrelated visits.
         val current = ShortcutBatchController.state.value
         if (HailData.biometricLogin) {
@@ -167,6 +170,11 @@ class ShortcutBatchActivity : FragmentActivity() {
     @Composable
     private fun BatchScreen() {
         val current by ShortcutBatchController.state.collectAsState()
+        DisposableEffect(current.active, authenticated.value) {
+            if (current.active && authenticated.value) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            onDispose { window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+        }
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(modifier = Modifier.safeDrawingPadding().verticalScroll(rememberScrollState()).padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {

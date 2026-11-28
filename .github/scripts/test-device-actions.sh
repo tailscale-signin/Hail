@@ -8,27 +8,25 @@ if [[ ${GITHUB_ACTIONS:-} != true ]] || ! grep -Eq '\[(ro.kernel.qemu|ro.boot.qe
 fi
 sdk_tools="$ANDROID_HOME/build-tools/36.0.0"
 fixture_dir="$(mktemp -d)"
-trap 'rm -rf "$fixture_dir"' EXIT
+finish_device_suite() {
+    local status=$?
+    trap - EXIT
+    if [[ $status != 0 && -n ${report:-} ]]; then
+        if declare -F capture_runner_state >/dev/null; then
+            capture_runner_state runner-final-failure || true
+        fi
+        timeout 10s adb pull /sdcard/Android/data/com.aistra.hail.debug/files/verification-release \
+            "$report/release-ui-evidence" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$fixture_dir" || true
+    exit "$status"
+}
+trap finish_device_suite EXIT
 report=app/build/outputs/androidTest-results/connected/fixtures
 mkdir -p "$report"
 exec > >(tee "$report/setup.log") 2>&1
-./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 keytool -genkeypair -keystore "$fixture_dir/test.p12" -storetype PKCS12 -storepass android -keypass android -alias fixture -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Hail CI Fixture"
-
-# Ensure that the app and its instrumentation use the same temporary certificate
-# even when the emulator action changes the SDK user directory.
-install_test_apk() {
-    local directory="$1" destination="$2"
-    local source="$directory/$(jq -r '.elements[0].outputFile' "$directory/output-metadata.json")"
-    "$sdk_tools/apksigner" sign --ks "$fixture_dir/test.p12" --ks-pass pass:android --ks-key-alias fixture --out "$destination" "$source"
-    "$sdk_tools/apksigner" verify "$destination"
-    adb install --no-incremental --no-streaming -r -t "$destination"
-}
-for pkg in com.aistra.hail.debug.test com.aistra.hail.debug; do
-    if [[ "$(adb shell pm list packages "$pkg" | tr -d '\r')" == "package:$pkg" ]]; then adb uninstall "$pkg"; fi
-done
-install_test_apk app/build/outputs/apk/debug "$fixture_dir/hail.apk"
-install_test_apk app/build/outputs/apk/androidTest/debug "$fixture_dir/instrumentation.apk"
+bash .github/scripts/install-candidate-apks.sh "$report"
 adb shell 'run-as com.aistra.hail.debug mkdir -p files/v1'
 adb shell -T 'run-as com.aistra.hail.debug sh -c "cat > files/v1/apps.json"' <<'JSON'
 [{"package":"example.legacy.single","tag":0,"pinned":true},{"package":"example.legacy.multiple","tags":[0,-91],"whitelisted":true}]
@@ -37,11 +35,11 @@ adb shell -T 'run-as com.aistra.hail.debug sh -c "cat > files/v1/tags.json"' <<'
 [{"tag":"Default","id":0},{"tag":"Legacy","id":-91}]
 JSON
 install_fixture() {
-    local name="$1" enabled="${2:-true}"
+    local name="$1" enabled="${2:-true}" label="${3:-Hail fixture $1}"
     cat > "$fixture_dir/AndroidManifest.xml" <<XML
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.aistra.hail.testfixture.$name" android:versionCode="1" android:versionName="1">
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="36" />
-    <application android:hasCode="false" android:label="Hail fixture $name" android:enabled="$enabled">
+    <application android:hasCode="false" android:label="$label" android:enabled="$enabled">
         <activity android:name="android.app.Activity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -66,13 +64,39 @@ adb install --no-incremental --no-streaming "$shizuku_apk"
 shizuku_dir="$(adb shell pm path moe.shizuku.privileged.api | tr -d '\r' | sed -n 's|^package:\(.*\)/base.apk$|\1|p')"
 test -n "$shizuku_dir"
 adb shell "$shizuku_dir/lib/x86_64/libshizuku.so"
-classes=com.aistra.hail.app.DeviceFreezeTest,com.aistra.hail.ui.settings.BackupSettingsTest,com.aistra.hail.ui.settings.BulkShortcutLauncherTest,com.aistra.hail.ui.apps.SystemAppsTest,com.aistra.hail.ui.apps.AppRiskPresentationTest,com.aistra.hail.ui.settings.DebugLogTest,com.aistra.hail.ui.settings.IndividualShortcutBatchTest
+classes=com.aistra.hail.app.DeviceFreezeTest,com.aistra.hail.ui.settings.BackupSettingsTest,com.aistra.hail.ui.settings.BulkShortcutLauncherTest,com.aistra.hail.ui.apps.SystemAppsTest,com.aistra.hail.ui.apps.AppRiskPresentationTest,com.aistra.hail.ui.settings.DebugLogTest,com.aistra.hail.ui.settings.IndividualShortcutBatchTest,com.aistra.hail.utils.ShizukuCompatibilityTest,com.aistra.hail.utils.ShizukuCommandServiceTest
 # Have the complete APK on the device before instrumentation starts. Keep Android's startup diagnostics on failure.
 capture_runner_state() {
     local prefix="$1"
     timeout 12s adb logcat -b main -b system -b crash -d -t 4000 > "$report/$prefix.log" || true
     timeout 8s adb shell dumpsys activity instrumentation > "$report/$prefix-activity.txt" || true
+    timeout 8s adb shell dumpsys activity activities > "$report/$prefix-activities.txt" || true
+    timeout 8s adb shell dumpsys window windows > "$report/$prefix-windows.txt" || true
     timeout 8s adb shell ps -A > "$report/$prefix-processes.txt" || true
+}
+capture_release_failure() {
+    local prefix="$1"
+    capture_runner_state "$prefix"
+    timeout 8s adb exec-out screencap -p > "$report/$prefix.png" || true
+    timeout 8s adb shell uiautomator dump "/data/local/tmp/$prefix.xml" > "$report/$prefix-hierarchy.txt" 2>&1 || true
+    timeout 8s adb pull "/data/local/tmp/$prefix.xml" "$report/$prefix.xml" >/dev/null 2>&1 || true
+    timeout 8s adb pull /sdcard/Android/data/com.aistra.hail.debug/files/verification "$report/screenshots" >/dev/null 2>&1 || true
+}
+run_release_suite() {
+    local label="$1" limit="$2"
+    shift 2
+    local output="$report/$label.txt" rc=0
+    timeout "$limit" adb shell am instrument -w -r "$@" \
+        com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output" || rc=$?
+    # Instrumentation captures the failing UI before its cleanup presses Home.
+    # Collect that original state on success and failure, before any status check exits.
+    timeout 8s adb pull /sdcard/Android/data/com.aistra.hail.debug/files/verification-release \
+        "$report/release-ui-$label" >/dev/null 2>&1 || true
+    if [[ $rc != 0 ]] || ! grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output" ||
+        ! grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"; then
+        capture_release_failure "$label-failure"
+        return 1
+    fi
 }
 run_device_suite() {
     timeout 7m adb shell am instrument -w -r -e class "$classes" -e hailCiFixtures true \
@@ -118,13 +142,13 @@ pull_trace() {
 }
 
 # Compare the official release and the optimized fork in the same user on the same disposable Android image.
-./gradlew :app:assembleRelease
 upstream="$fixture_dir/upstream.apk"
 curl --fail --location --silent --show-error --retry 3 -o "$upstream" \
     https://github.com/aistra0528/Hail/releases/download/v1.11.0/Hail-v1.11.0.apk
 echo "3be0c4a210b0472198ea3b675fcbd5720fa16288dcff119557644ea947003236  $upstream" | sha256sum -c -
 "$sdk_tools/apksigner" verify "$upstream"
-release_dir=app/build/outputs/apk/release
+release_dir=.ci-apks/release
+(cd "$release_dir" && sha256sum -c SHA256SUMS)
 release_version=$(jq -er '.elements[0].versionName' "$release_dir/output-metadata.json")
 release_code=$(jq -er '.elements[0].versionCode' "$release_dir/output-metadata.json")
 release_apk="$release_dir/$(jq -r '.elements[0].outputFile' "$release_dir/output-metadata.json")"
@@ -147,13 +171,12 @@ for distribution in baseline current; do
     apk=baseline
     if [[ $distribution == current ]]; then apk=fork; fi
     adb install --no-incremental --no-streaming -r "$fixture_dir/$apk.apk"
-    output="$report/benchmark-$distribution.txt"
-    timeout 5m adb shell am instrument -w -r -e class 'com.aistra.hail.ui.apps.ReleaseSystemAppsTest#measuresBulkDisableAndEnableOnInstalledFixtures' \
-        -e hailBulkBenchmark true -e distribution "$distribution" com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output"
-    grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
-    grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"
+    run_release_suite "benchmark-$distribution" 5m \
+        -e class 'com.aistra.hail.ui.apps.ReleaseSystemAppsTest#measuresBulkDisableAndEnableOnInstalledFixtures' \
+        -e hailBulkBenchmark true -e distribution "$distribution"
     pull_trace "benchmark-$distribution" "$report/benchmark-$distribution.jsonl"
 done
+
 python3 .github/scripts/check-bulk-performance.py "$report" "$release_version" "$release_code" | tee "$report/bulk-performance.txt"
 
 for server in shell root; do
@@ -184,14 +207,11 @@ for server in shell root; do
             if adb shell pm path com.aistra.hail | tr -d '\r' | grep -q '^package:'; then adb uninstall com.aistra.hail; fi
             adb install --no-incremental --no-streaming "$fixture_dir/$distribution.apk"
         fi
-        output="$report/parity-$distribution-$server.txt"
-        timeout 4m adb shell am instrument -w -r -e class 'com.aistra.hail.ui.apps.ReleaseSystemAppsTest#freezesAndThawsFromHome' \
+        run_release_suite "parity-$distribution-$server" 4m \
+            -e class 'com.aistra.hail.ui.apps.ReleaseSystemAppsTest#freezesAndThawsFromHome' \
             -e hailReleaseParity true -e server "$server" -e distribution "$distribution" \
-            -e releaseVersion "$release_version" -e releaseCode "$release_code" \
-            com.aistra.hail.debug.test/androidx.test.runner.AndroidJUnitRunner | tr -d '\r' | tee "$output"
+            -e releaseVersion "$release_version" -e releaseCode "$release_code"
         adb logcat -d -s Hail:E HailParity:I | tail -n 90 > "$report/backend-$distribution-$server.log"
-        grep -Fxq 'INSTRUMENTATION_STATUS_CODE: 0' "$output"
-        grep -Fxq 'INSTRUMENTATION_CODE: -1' "$output"
         if [[ $distribution == fork ]]; then
             pull_trace "$server" "$report/decision-$server.jsonl"
             python3 .github/scripts/check-decision-log.py "$report/decision-$server.jsonl" "$server" "$release_version" "$release_code"

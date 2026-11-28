@@ -5,6 +5,68 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
+    <LinearLayout
+        android:id="@+id/apps_sort_controls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="8dp">
+
+        <com.google.android.material.textview.MaterialTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:labelFor="@id/apps_sort"
+            android:text="@string/sort_by"
+            android:textAppearance="@style/TextAppearance.Hail.BodyMedium" />
+
+        <androidx.appcompat.widget.AppCompatSpinner
+            android:id="@+id/apps_sort"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minHeight="48dp"
+            android:spinnerMode="dropdown" />
+
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/app_risk_info"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:padding="12dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_outline_info"
+            android:tint="?attr/colorOnSurfaceVariant"
+            android:contentDescription="@string/app_risk_about" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/app_risk_help"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="8dp"
+        android:visibility="gone">
+
+        <com.google.android.material.textview.MaterialTextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/app_risk_about_details"
+            android:textAppearance="@style/TextAppearance.Hail.BodySmall" />
+
+        <androidx.appcompat.widget.AppCompatButton
+            android:id="@+id/app_risk_source"
+            style="?attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:textAllCaps="false"
+            android:text="@string/app_risk_view_source"
+            android:textColor="?attr/colorOnSurface" />
+    </LinearLayout>
+
     <include layout="@layout/action_feedback" />
 
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout

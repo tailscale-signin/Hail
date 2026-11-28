@@ -68,6 +68,8 @@ import com.google.android.material.textview.MaterialTextView
 import com.rosan.dhizuku.api.Dhizuku
 import com.rosan.dhizuku.api.DhizukuRequestPermissionListener
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.callbackFlow
@@ -75,7 +77,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.zhanghai.compose.preference.*
-import rikka.shizuku.Shizuku
 
 class SettingsFragment : MainFragment(), MenuProvider {
     private val backups: BackupViewModel by viewModels()
@@ -91,6 +92,9 @@ class SettingsFragment : MainFragment(), MenuProvider {
     }
 
     private val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    private var shizukuPermissionJob: Job? = null
+    private var homeSurfaceRepairJob: Job? = null
+    private var modeRequestGeneration = 0L
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val menuHost = requireActivity() as MenuHost
@@ -114,6 +118,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
             mutableStateOf(ShortcutPinAccessibilityService.isEnabled(requireContext()))
         }
         val repairMessage = remember { mutableStateOf(R.string.home_surfaces_repair_summary) }
+        val showLauncherRestoreHelp = remember { mutableStateOf(false) }
         DisposableEffect(viewLifecycleOwner) {
             val lifecycle = viewLifecycleOwner.lifecycle
             val observer = LifecycleEventObserver { _, event ->
@@ -125,6 +130,7 @@ class SettingsFragment : MainFragment(), MenuProvider {
             onDispose { lifecycle.removeObserver(observer) }
         }
         val autoFreezeAfterLock = rememberPreferenceState(HailData.AUTO_FREEZE_AFTER_LOCK, false)
+        val shizuku by ShizukuConnection.state.collectAsState()
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             listPreference(
                 key = HailData.WORKING_MODE,
@@ -147,6 +153,18 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 icon = Icons.Outlined.Adb,
                 type = ListPreferenceType.ALERT_DIALOG
             )
+            preference(key = "shizuku_connection", title = { Text(stringResource(R.string.shizuku_connection)) },
+                summary = { Text(stringResource(shizukuSummary(shizuku))) },
+                icon = { Icon(Icons.Outlined.Link, contentDescription = null) },
+                onClick = {
+                    if (shizuku.status == ShizukuConnection.Status.PERMISSION_REQUIRED) {
+                        requestShizukuAuthorization(null) {}
+                    } else {
+                        val intent = requireContext().packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+                        if (intent != null) startActivity(intent)
+                        else if (!shizuku.ready) HUI.showToast(R.string.shizuku_missing)
+                    }
+                })
             switchPreference(
                 key = HailData.BIOMETRIC_LOGIN,
                 defaultValue = false,
@@ -367,18 +385,32 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 summary = { Text(stringResource(repairMessage.value)) },
                 icon = { Icon(Icons.Outlined.Refresh, contentDescription = null) },
                 onClick = {
-                    lifecycleScope.launch {
-                        val refreshed = withContext(Dispatchers.IO) {
-                            runCatching {
-                                AllAppsWidget.refresh(app)
-                                HShortcuts.refreshPinnedAppShortcuts()
-                            }.onFailure(HLog::e).getOrDefault(false)
+                    if (homeSurfaceRepairJob?.isActive != true) {
+                        homeSurfaceRepairJob = viewLifecycleOwner.lifecycleScope.launch {
+                            repairMessage.value = R.string.home_surfaces_refreshing
+                            val refreshed = try {
+                                withContext(Dispatchers.IO) {
+                                    AllAppsWidget.refresh(app)
+                                    HShortcuts.refreshPinnedAppShortcuts(regenerateIcons = true)
+                                }
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Exception) {
+                                HLog.e(error)
+                                false
+                            }
+                            repairMessage.value = if (refreshed) R.string.home_surfaces_refreshed
+                                else R.string.home_surfaces_refresh_failed
                         }
-                        repairMessage.value = if (refreshed) R.string.home_surfaces_refreshed
-                            else R.string.home_surfaces_refresh_failed
                     }
                 }
             )
+            preference(key = "launcher_backup_restore_help",
+                title = { Text(stringResource(R.string.launcher_backup_restore_title)) },
+                summary = { Text(stringResource(if (showLauncherRestoreHelp.value)
+                    R.string.launcher_backup_restore_steps else R.string.launcher_backup_restore_summary)) },
+                icon = { Icon(Icons.Outlined.Restore, contentDescription = null) },
+                onClick = { showLauncherRestoreHelp.value = !showLauncherRestoreHelp.value })
             listPreference(
                 key = HailData.DYNAMIC_SHORTCUT_ACTION,
                 defaultValue = HailData.ACTION_NONE,
@@ -616,6 +648,9 @@ class SettingsFragment : MainFragment(), MenuProvider {
     }
 
     fun onWorkingModeChange(rememberState: MutableState<String>, mode: String): Boolean {
+        // A delayed grant must not overwrite a different mode selected while the dialog was open.
+        modeRequestGeneration++
+        shizukuPermissionJob?.cancel()
         val trace = DecisionLog.begin("settings", "select_mode", mode)
         trace?.event("mode_requested", null, "previousMode" to HailData.workingMode)
         fun decision(accepted: Boolean, reason: String): Boolean {
@@ -680,40 +715,12 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 return decision(false, "CHANGE_COMPONENT_ENABLED_STATE unavailable")
             }
 
-            mode.startsWith(HailData.SHIZUKU) -> return runCatching {
-                when {
-                    Shizuku.isPreV11() -> throw IllegalStateException("unsupported shizuku version")
-                    Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED -> decision(true, "Shizuku permission granted")
-                    Shizuku.shouldShowRequestPermissionRationale() -> {
-                        HUI.showToast(R.string.permission_denied)
-                        decision(false, "Shizuku permission denied")
-                    }
-
-                    else -> {
-                        lifecycleScope.launch {
-                            val result = callbackFlow {
-                                val shizukuRequestCode = 0
-                                val listener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
-                                    if (requestCode != shizukuRequestCode) return@OnRequestPermissionResultListener
-                                    trySendBlocking(grantResult == PackageManager.PERMISSION_GRANTED)
-                                }
-                                Shizuku.addRequestPermissionResultListener(listener)
-                                Shizuku.requestPermission(shizukuRequestCode)
-                                awaitClose {
-                                    Shizuku.removeRequestPermissionResultListener(listener)
-                                }
-                            }.first()
-                            decision(result, "Shizuku permission response")
-                            if (result) rememberState.value = mode
-                        }
-                        decision(false, "Waiting for Shizuku permission")
-                    }
+            mode.startsWith(HailData.SHIZUKU) -> {
+                requestShizukuAuthorization(trace) {
+                    rememberState.value = mode
+                    activity.invalidateOptionsMenu()
                 }
-            }.getOrElse {
-                trace?.error("mode_check_failed", null, it)
-                HLog.e(it)
-                HUI.showToast(R.string.shizuku_missing)
-                false
+                return decision(false, "Checking Shizuku connection and permission")
             }
 
             mode.startsWith(HailData.ISLAND) -> return runCatching {
@@ -752,6 +759,53 @@ class SettingsFragment : MainFragment(), MenuProvider {
         }
 
         return decision(true, "Selected mode is available")
+    }
+
+    @StringRes
+    private fun shizukuSummary(state: ShizukuConnection.State): Int = when (state.status) {
+        ShizukuConnection.Status.STOPPED -> R.string.shizuku_connection_stopped
+        ShizukuConnection.Status.UNSUPPORTED -> R.string.shizuku_connection_unsupported
+        ShizukuConnection.Status.PERMISSION_REQUIRED -> R.string.shizuku_connection_permission
+        ShizukuConnection.Status.DENIED -> R.string.shizuku_connection_denied
+        ShizukuConnection.Status.READY -> when (state.uid) {
+            0 -> R.string.shizuku_connection_root
+            2000 -> R.string.shizuku_connection_shell
+            else -> R.string.shizuku_connection_other
+        }
+    }
+
+    private fun requestShizukuAuthorization(trace: DecisionTrace?, onAuthorized: () -> Unit) {
+        shizukuPermissionJob?.cancel()
+        val request = ++modeRequestGeneration
+        shizukuPermissionJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val allowed = ShizukuConnection.requestPermission()
+                if (request != modeRequestGeneration) return@launch
+                trace?.event("mode_decision", null, "accepted" to allowed,
+                    "reason" to "Shizuku connection and permission response")
+                if (allowed) onAuthorized() else {
+                    val state = ShizukuConnection.state.value
+                    HUI.showToast(if (state.status == ShizukuConnection.Status.PERMISSION_REQUIRED)
+                        R.string.shizuku_permission_incomplete else shizukuSummary(state))
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                trace?.error("mode_check_failed", null, error)
+                HLog.e(error)
+                ShizukuConnection.refreshAsync()
+                HUI.showToast(R.string.shizuku_permission_incomplete)
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        modeRequestGeneration++
+        shizukuPermissionJob?.cancel()
+        shizukuPermissionJob = null
+        homeSurfaceRepairJob?.cancel()
+        homeSurfaceRepairJob = null
+        super.onDestroyView()
     }
 
     private suspend fun onTerminalResult(exitValue: Int, msg: String?) = withContext(Dispatchers.Main) {

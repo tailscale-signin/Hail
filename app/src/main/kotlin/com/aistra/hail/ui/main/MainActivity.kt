@@ -15,11 +15,13 @@ import androidx.navigation.ui.AppBarConfiguration
 import androidx.navigation.ui.setupActionBarWithNavController
 import androidx.navigation.ui.setupWithNavController
 import com.aistra.hail.R
+import com.aistra.hail.HailApp.Companion.app
 import com.aistra.hail.app.HailData
 import com.aistra.hail.databinding.ActivityMainBinding
 import com.aistra.hail.extensions.*
 import com.aistra.hail.utils.HPolicy
 import com.aistra.hail.utils.HUI
+import com.aistra.hail.utils.ShizukuConnection
 import com.google.android.material.appbar.AppBarLayout
 import com.aistra.hail.ui.PrivateDialogBuilder
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
@@ -43,6 +45,7 @@ class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedList
 
     override fun onStart() {
         super.onStart()
+        ShizukuConnection.refreshAsync()
         if (!HailData.biometricLogin || authenticated) {
             binding.root.isVisible = true
         } else if (!authenticating) {
@@ -62,6 +65,11 @@ class MainActivity : AppCompatActivity(), NavController.OnDestinationChangedList
             authenticated = false
         }
         super.onStop()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        app.repairShortcutIconsOnce()
     }
 
     private fun initView() = ActivityMainBinding.inflate(layoutInflater).apply {

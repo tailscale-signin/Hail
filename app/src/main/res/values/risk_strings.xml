@@ -13,8 +13,22 @@
     <string name="app_risk_home_reason">Your current Home app. Disabling can leave you without a working Home screen.</string>
     <string name="app_risk_input_reason">Your current keyboard. Disabling can prevent text entry.</string>
     <string name="app_risk_admin_reason">Active device administrator. Disabling can break device management or recovery.</string>
-    <string name="app_risk_unknown_reason">No community rating. Device dependencies are unknown.</string>
+    <string name="app_risk_unknown_reason">No usable rating in the bundled community list. Device dependencies are unknown.</string>
     <string name="app_risk_community_reason">Community guidance · %1$s</string>
     <string name="app_risk_check_features">Check which features and dependencies you need.</string>
     <string name="app_risk_description_toggle">Show or hide full app risk guidance</string>
+    <string name="app_sort_risk_recommended">Risk · Recommended first</string>
+    <string name="app_sort_risk_unsafe">Risk · Unsafe first</string>
+    <string name="app_risk_about">About risk ratings and sources</string>
+    <string name="app_risk_about_details">UAD-ng community ratings match exact package names. Android’s current Home, keyboard and administrator roles, plus core-component checks, take priority.\n\nRecommended is removal advice, not proof of safe freezing. Risk order: Recommended, Caution, Risky, Unsafe. Unknown stays last in both directions.\n\nTap an app description for its evidence and listed dependencies. The community list is not exhaustive.</string>
+    <string name="app_risk_view_source">View bundled rating source</string>
+    <string name="app_risk_source_unavailable">No browser is available to open the rating source.</string>
+    <string name="app_risk_evidence_role">Device evidence: Android reports this package in a currently active role. Checked again when the app list refreshes.</string>
+    <string name="app_risk_evidence_uid">Device evidence: Android reports this system app under its system identity. Hail treats that identity as essential.</string>
+    <string name="app_risk_evidence_core">Protection rule: this system package exactly matches Hail’s core Android list. The package-name prefix alone is not used as evidence.</string>
+    <string name="app_risk_evidence_source">Community rating: %1$s · UAD-ng snapshot %2$s. Exact package match; bundled data integrity checked.</string>
+    <string name="app_risk_evidence_override">The essential-component check takes priority over the community rating for this device.</string>
+    <string name="app_risk_dependencies">Community-listed dependencies:\n%1$s</string>
+    <string name="app_risk_needed_by">Community says these packages depend on this app:\n%1$s</string>
+    <string name="app_risk_evidence_limit">This explains the rating; it does not verify every device dependency or guarantee that freezing will be safe.</string>
 </resources>
