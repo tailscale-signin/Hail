@@ -1,5 +1,6 @@
 package com.aistra.hail.utils
 
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -27,9 +28,26 @@ class ShizukuCommandServiceTest {
         assertTrue("The shell-backed CI Shizuku service must be authorized", HShizuku.isAuthorized())
         assertEquals(2000, Shizuku.getUid())
         fun shell(command: String) = listOf("/system/bin/sh", "-c", command)
-        fun fixtureShell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
-            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
-        ).bufferedReader().use { it.readText().trim() }
+        fun fixtureShell(command: String): String {
+            check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                "This command CI fixture requires Android 12 or newer"
+            }
+            // The String command API splits arguments without interpreting shell syntax. Send
+            // the small fixture script to an actual shell's stdin so quoting and redirects work.
+            val pipes = InstrumentationRegistry.getInstrumentation().uiAutomation
+                .executeShellCommandRw("/system/bin/sh")
+            try {
+                return ParcelFileDescriptor.AutoCloseInputStream(requireNotNull(pipes[0])).use { stdout ->
+                    ParcelFileDescriptor.AutoCloseOutputStream(requireNotNull(pipes[1])).use { stdin ->
+                        stdin.write((command + "\n").toByteArray(Charsets.UTF_8))
+                    }
+                    stdout.bufferedReader().use { it.readText().trim() }
+                }
+            } finally {
+                // Also covers a failed stream constructor; closing a descriptor twice is safe.
+                pipes.forEach { descriptor -> runCatching { descriptor?.close() } }
+            }
+        }
 
         val identity = ShizukuCommandClient.execute(shell("id -u"))
         assertEquals(identity.output, 0, identity.exitCode)
