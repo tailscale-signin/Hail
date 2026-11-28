@@ -1,5 +1,6 @@
 package com.aistra.hail.ui.settings
 
+import android.appwidget.AppWidgetManager
 import android.content.Intent
 import android.content.pm.ShortcutManager
 import android.os.SystemClock
@@ -96,9 +97,25 @@ class BulkShortcutLauncherTest {
                 val ids = AllAppsWidget.widgetIds(context)
                 // Rebuild restored host IDs and exercise the new adapter/PendingIntent identity.
                 AllAppsWidget().onRestored(context, intArrayOf(987654), ids)
+                val manager = AppWidgetManager.getInstance(context)
+                ids.forEach { id -> assertTrue(manager.getAppWidgetOptions(id)
+                    .getBoolean(AppWidgetManager.OPTION_APPWIDGET_RESTORE_COMPLETED)) }
                 device.pressHome()
                 val gridSelector = By.res(context.packageName, "all_apps_grid")
                 await(gridSelector)
+                if (InstrumentationRegistry.getArguments().getString("hailCiFixtures") == "true") {
+                    // Exercise real launcher process loss on the disposable CI device, preserving its layout data.
+                    device.executeShellCommand("am force-stop $launcher")
+                    device.pressHome()
+                    assertEquals(ids.toList(), AllAppsWidget.widgetIds(context).toList())
+                    // A restarted launcher may open its default page rather than the widget's page.
+                    for (page in 1..5) {
+                        if (device.wait(Until.hasObject(gridSelector), 2_000)) break
+                        device.swipe(device.displayWidth * 3 / 4, device.displayHeight / 2,
+                            device.displayWidth / 4, device.displayHeight / 2, 25)
+                    }
+                    await(gridSelector)
+                }
                 context.getExternalFilesDir("verification")?.let { folder ->
                     folder.mkdirs()
                     device.takeScreenshot(java.io.File(folder, "all-apps-widget.png"))
@@ -118,10 +135,21 @@ class BulkShortcutLauncherTest {
                 await(By.res(context.packageName, "nav_settings"))
                 // MainActivity retains Settings and its scroll state on returning from the launcher.
                 if (!device.hasObject(By.text(context.getString(R.string.all_apps_widget_add)))) openWidgetSettings()
-                clickPreference(R.string.all_apps_widget_add)
-                await(By.text(context.getString(R.string.all_apps_widget_refreshed)))
+                val repair = By.text(context.getString(R.string.home_surfaces_repair))
+                for (page in 1..4) {
+                    if (device.hasObject(repair)) break
+                    device.swipe(device.displayWidth / 2, device.displayHeight * 3 / 4,
+                        device.displayWidth / 2, device.displayHeight / 2, 25)
+                }
+                clickPreference(R.string.home_surfaces_repair)
+                await(By.text(context.getString(R.string.home_surfaces_refreshed)))
                 assertEquals("Refreshing must not add duplicate widgets or queue more launcher prompts", ids.toList(), AllAppsWidget.widgetIds(context).toList())
                 assertFalse(device.hasObject(approve))
+                // Existing/orphaned IDs must never prevent an explicit request to the current launcher.
+                instrumentation.runOnMainSync { AllAppsWidget.requestPin(context) }
+                await(approve)
+                device.pressBack()
+                assertEquals(ids.toList(), AllAppsWidget.widgetIds(context).toList())
             }
         } finally {
             prefs.edit().putString(HailData.WORKING_MODE, originalMode).putBoolean(HailData.BIOMETRIC_LOGIN, biometric).commit()

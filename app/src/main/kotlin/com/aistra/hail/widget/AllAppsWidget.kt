@@ -34,7 +34,14 @@ class AllAppsWidget : AppWidgetProvider() {
 
     override fun onRestored(context: Context, oldWidgetIds: IntArray, newWidgetIds: IntArray) {
         // The host owns IDs. Rebuild every adapter/PendingIntent with its restored ID.
-        onUpdate(context, AppWidgetManager.getInstance(context), newWidgetIds)
+        val manager = AppWidgetManager.getInstance(context)
+        onUpdate(context, manager, newWidgetIds)
+        // Hosts can keep a restored instance in a pending placeholder until the provider acknowledges it.
+        newWidgetIds.forEach { id ->
+            manager.updateAppWidgetOptions(id, Bundle().apply {
+                putBoolean(AppWidgetManager.OPTION_APPWIDGET_RESTORE_COMPLETED, true)
+            })
+        }
     }
 
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
@@ -74,11 +81,8 @@ class AllAppsWidget : AppWidgetProvider() {
         /** Only the launcher's callback reports success; a request's true result is not a pin receipt. */
         fun requestPin(context: Context) {
             try {
-                if (widgetIds(context).isNotEmpty()) {
-                    refresh(context)
-                    message.value = R.string.all_apps_widget_refreshed
-                    return
-                }
+                // IDs can belong to a previous launcher or an orphaned layout. Every explicit Add action
+                // must reach the current launcher; the separate Refresh action updates existing widgets.
                 val manager = AppWidgetManager.getInstance(context)
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !manager.isRequestPinAppWidgetSupported) {
                     message.value = R.string.all_apps_widget_manual
