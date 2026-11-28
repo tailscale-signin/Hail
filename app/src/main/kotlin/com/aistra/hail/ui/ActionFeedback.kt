@@ -11,7 +11,7 @@ import com.aistra.hail.app.FreezeResult
 fun View.showActionFeedback(message: CharSequence?) {
     val panel = findViewById<View>(R.id.action_feedback_panel) ?: return
     val report = panel.findViewById<TextView>(R.id.action_feedback_message)
-    report.text = message.orEmpty()
+    report.text = message ?: ""
     panel.isVisible = !message.isNullOrEmpty()
     panel.findViewById<View>(R.id.dismiss_action_feedback).setOnClickListener {
         report.text = ""

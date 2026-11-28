@@ -17,6 +17,7 @@ fun AppTheme(content: @Composable () -> Unit) {
         fun color(id: Int) = Color(ContextCompat.getColor(context, id))
         val base = darkColorScheme()
         base.copy(
+            surfaceTint = Color.Transparent,
             primary = color(R.color.md_theme_primary),
             onPrimary = color(R.color.md_theme_onPrimary),
             primaryContainer = color(R.color.md_theme_primaryContainer),

@@ -11,6 +11,7 @@
         <item name="android:windowBackground">@color/md_theme_background</item>
         <item name="android:windowSplashScreenBackground" tools:targetApi="s">@color/md_theme_background</item>
         <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
+        <item name="elevationOverlayEnabled">false</item>
         <item name="android:enforceStatusBarContrast" tools:targetApi="q">false</item>
         <item name="android:enforceNavigationBarContrast" tools:targetApi="q">false</item>
     </style>
