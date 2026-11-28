@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="all_apps_widget_name">Hail · All apps</string>
+    <string name="all_apps_widget_add">Add all-apps grid to Home screen</string>
+    <string name="all_apps_widget_summary">All launchable apps in one scrollable widget. Your launcher may ask once. Separate icons still need individual launcher approval.</string>
+    <string name="all_apps_widget_pending">Confirm once in your launcher to add the whole grid. If you dismiss it, tap here to try again.</string>
+    <string name="all_apps_widget_added">All-apps grid added. Resize it on your Home screen and scroll to see every app.</string>
+    <string name="all_apps_widget_refreshed">Your existing all-apps grid has been refreshed.</string>
+    <string name="all_apps_widget_manual">Open your launcher’s Widgets menu, choose Hail · All apps, and drag the grid to your Home screen. This launcher does not support adding it from Hail.</string>
+    <string name="all_apps_widget_missing">Your launcher no longer has Hail’s app grid. Tap here to add it again with one confirmation.</string>
+    <string name="all_apps_widget_empty">No launchable apps in this Android profile. Tap Refresh to check again.</string>
+    <string name="all_apps_widget_launch">Open %1$s</string>
+    <string name="all_apps_widget_refresh">Refresh apps</string>
+    <string name="home_surfaces_repair">Refresh Home screen shortcuts</string>
+    <string name="home_surfaces_repair_summary">Refresh existing Hail shortcuts and the app grid. If your launcher erased its layout, add the grid again above.</string>
+    <string name="home_surfaces_refreshed">Existing shortcuts and app grids refreshed.</string>
+    <string name="home_surfaces_refresh_failed">Could not refresh every shortcut. Your existing shortcuts were kept; tap to retry.</string>
+</resources>

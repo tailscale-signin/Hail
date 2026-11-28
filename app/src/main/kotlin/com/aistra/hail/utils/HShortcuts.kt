@@ -128,6 +128,24 @@ object HShortcuts {
         ShortcutManagerCompat.removeAllDynamicShortcuts(app)
     }
 
+    /** Update existing launcher records in place. Never remove a pin because a package lookup is transiently absent. */
+    fun refreshPinnedAppShortcuts(): Boolean {
+        if (!HTarget.O) return true
+        val updates = ShortcutManagerCompat.getShortcuts(app, ShortcutManagerCompat.FLAG_MATCH_PINNED).mapNotNull { pin ->
+            val request = pin.intent ?: return@mapNotNull null
+            if (request.action != HailApi.ACTION_LAUNCH) return@mapNotNull null
+            val pkg = request.getStringExtra(HailData.KEY_PACKAGE) ?: return@mapNotNull null
+            val info = HPackages.getApplicationInfoOrNull(pkg) ?: return@mapNotNull null
+            // Preserve IDs, tags and icon data across upgrades. Omitting the icon retains its existing launcher icon
+            // and avoids sending hundreds of bitmaps in one Binder transaction.
+            ShortcutInfoCompat.Builder(app, pin.id)
+                .setShortLabel(info.loadLabel(app.packageManager).ifBlank { pkg })
+                .setIntent(Intent(request).putExtra(HailApi.EXTRA_ORIGIN, HailApi.SHORTCUT)
+                    .setClass(app, InternalActionActivity::class.java)).build()
+        }
+        return updates.isEmpty() || ShortcutManagerCompat.updateShortcuts(app, updates)
+    }
+
     private fun getDrawableIcon(drawable: Drawable): IconCompat =
         IconCompat.createWithBitmap(getBitmapFromDrawable(drawable))
 

@@ -28,6 +28,7 @@
             android:name="android.permission.MANAGE_APP_OPS_MODES"
             tools:ignore="ProtectedPermissions"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="com.oasisfeng.island.permission.FREEZE_PACKAGE"/>
     <uses-permission android:name="com.oasisfeng.island.permission.SUSPEND_PACKAGE"/>
 
@@ -118,6 +119,21 @@
                 android:name=".receiver.ScreenOffReceiver"
                 android:exported="false"/>
         <receiver
+                android:name=".widget.AllAppsWidget"
+                android:exported="false"
+                android:label="@string/all_apps_widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_all_apps_info"/>
+        </receiver>
+        <receiver android:name=".widget.HomeSurfaceReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
+        </receiver>
+        <receiver
                 android:name=".receiver.UnsuspendedReceiver"
                 android:exported="false">
             <intent-filter>
@@ -125,6 +141,10 @@
             </intent-filter>
         </receiver>
 
+        <service
+                android:name=".widget.AllAppsWidgetService"
+                android:permission="android.permission.BIND_REMOTEVIEWS"
+                android:exported="false"/>
         <service
                 android:name=".services.QSTileService"
                 android:exported="true"

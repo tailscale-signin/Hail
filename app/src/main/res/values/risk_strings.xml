@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_risk_recommended">Recommended</string>
+    <string name="app_risk_caution">Caution</string>
+    <string name="app_risk_risky">Risky</string>
+    <string name="app_risk_unsafe">Unsafe</string>
+    <string name="app_risk_unknown">Unknown</string>
+    <string name="app_risk_system_app">System app</string>
+    <string name="app_risk_user_app">User app</string>
+    <string name="app_risk_essential_app">Essential app</string>
+    <string name="app_risk_badge">%1$s · %2$s</string>
+    <string name="app_risk_core_reason">Core Android component. Disabling can break system functions or prevent startup.</string>
+    <string name="app_risk_home_reason">Your current Home app. Disabling can leave you without a working Home screen.</string>
+    <string name="app_risk_input_reason">Your current keyboard. Disabling can prevent text entry.</string>
+    <string name="app_risk_admin_reason">Active device administrator. Disabling can break device management or recovery.</string>
+    <string name="app_risk_unknown_reason">No community rating. Device dependencies are unknown.</string>
+    <string name="app_risk_community_reason">Community guidance · %1$s</string>
+    <string name="app_risk_check_features">Check which features and dependencies you need.</string>
+    <string name="app_risk_description_toggle">Show or hide full app risk guidance</string>
+</resources>

@@ -41,6 +41,8 @@ import com.aistra.hail.databinding.DialogInputBinding
 import com.aistra.hail.databinding.FragmentPagerBinding
 import com.aistra.hail.extensions.*
 import com.aistra.hail.ui.main.MainFragment
+import com.aistra.hail.ui.failureDetails
+import com.aistra.hail.ui.showActionFeedback
 import com.aistra.hail.ui.theme.AppTheme
 import com.aistra.hail.utils.*
 import com.aistra.hail.work.HWork
@@ -167,6 +169,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             val rows = withContext(Dispatchers.IO) {
                 val collator = Collator.getInstance()
                 val lookup = PackageLookup(mode, trace)
+                val risks = AppRisks.snapshot()
                 val packages = if (snapshot.isEmpty()) emptyMap() else lookup.all()
                 snapshot.mapNotNull { row ->
                     ensureActive()
@@ -189,7 +192,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                                 AppInfo.State.UNFROZEN -> "Package is available under the selected mode"
                             })
                     }
-                    row.copy(application = application, label = label, state = state)
+                    row.copy(application = application, label = label, state = state, risk = risks.classify(application))
                 }.sortedWith(compareByDescending<HomeRow> { it.pinned }.thenComparator { a, b -> collator.compare(a.label, b.label) })
             }
             lastLoggedView = loggingView
@@ -231,9 +234,9 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             return
         }
         if (pagerAdapter.currentList.find { it.info == info }?.state?.unavailable == true) {
-            DecisionLog.begin("home", "inspect_unavailable", pkg = info.packageName)?.event("status_opened", info.packageName,
+            DecisionLog.begin("home", "inspect_unavailable", pkg = info.packageName)?.event("launch_unavailable", info.packageName,
                 "reason" to "Home row has no current-user installation evidence")
-            showPackageStatus(info.packageName)
+            binding.root.showActionFeedback(getString(R.string.unavailable_app_inline))
             return
         }
         launchApp(info.packageName)
@@ -492,6 +495,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
     private fun launchApp(packageName: String) {
         val mode = HailData.workingMode
         val trace = DecisionLog.begin("home", "launch", mode, packageName)
+        binding.root.showActionFeedback(null)
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val target = AppManager.prepareLaunch(packageName, mode, trace)
@@ -499,7 +503,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                     trace?.skipped(packageName, "Home is no longer in the foreground")
                     return@launch
                 }
-                if (target == null) HUI.showToast(R.string.activity_not_found)
+                if (target == null) binding.root.showActionFeedback(getString(R.string.activity_not_found))
                 else {
                     startActivity(target)
                     trace?.event("activity_started", packageName)
@@ -509,7 +513,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                 throw e
             } catch (e: RuntimeException) {
                 trace?.error("launch_failed", packageName, e)
-                HUI.showToast(e.localizedMessage ?: getString(R.string.activity_not_found))
+                _binding?.root?.showActionFeedback(e.localizedMessage ?: getString(R.string.activity_not_found))
             }
         }
     }
@@ -528,14 +532,12 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
         }
         if (mode == HailData.MODE_DEFAULT) {
             trace?.skipped(packages.singleOrNull(), "Idle mode requires package controls or Android Settings")
-            val only = packages.singleOrNull()
-            if (only != null) showPackageStatus(only)
-            else PrivateDialogBuilder(activity).setMessage(R.string.msg_guide)
-                .setPositiveButton(android.R.string.ok, null).show()
+            binding.root.showActionFeedback(getString(R.string.msg_guide))
             return
         }
         val origin = binding
         val host = activity
+        origin.root.showActionFeedback(null)
         operations++
         origin.refresh.isRefreshing = true
         host.lifecycleScope.launch {
@@ -544,8 +546,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                     runCatching { !HShizuku.isRoot }.getOrDefault(false)
                 }) {
                     trace?.skipped(null, "ADB-backed Shizuku cannot hide packages")
-                    if (isResumed) PrivateDialogBuilder(host).setMessage(R.string.shizuku_hide_adb)
-                        .setPositiveButton(android.R.string.ok, null).show()
+                    if (_binding === origin) origin.root.showActionFeedback(getString(R.string.shizuku_hide_adb))
                     return@launch
                 }
                 val result = AppManager.changeFrozen(packages, frozen, mode = mode, trace = trace)
@@ -556,34 +557,12 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                         HailData.saveApps()
                     }
                 }
-                val message = AppManager.resultMessage(result, frozen)
-                val needsAttention = result.missing.isNotEmpty() || result.failed.isNotEmpty() || (!frozen && result.notInstalled.isNotEmpty())
-                if (isResumed && packages.size == 1 && needsAttention) {
-                    showPackageStatus(packages.single(), message.takeIf { result.failed.isNotEmpty() })
-                } else if (isResumed && packages.size > 1 && needsAttention) {
-                    val details = buildString {
-                        append(message)
-                        if (result.failed.isNotEmpty()) {
-                            append("\n\n").append(getString(R.string.package_change_refused))
-                            for (pkg in result.failed) {
-                                append('\n').append(pkg)
-                                result.failureReasons[pkg]?.let { append("\n").append(it) }
-                            }
-                        }
-                        for ((title, names) in listOf(R.string.package_unavailable to result.missing,
-                            R.string.package_not_installed_here to result.notInstalled)) {
-                            if (names.isNotEmpty()) append("\n\n").append(getString(title)).append('\n').append(names.joinToString("\n"))
-                        }
-                    }
-                    PrivateDialogBuilder(host).setTitle(if (frozen) R.string.action_freeze else R.string.action_unfreeze)
-                        .setMessage(details).setPositiveButton(android.R.string.ok, null)
-                        .setNeutralButton(R.string.copy_details) { _, _ -> HUI.copyText(details) }
-                        .apply {
-                            result.failed.singleOrNull()?.let { pkg ->
-                                setNegativeButton(R.string.package_status_controls) { _, _ -> showPackageStatus(pkg, result.failureReasons[pkg]) }
-                            }
-                        }.show()
-                } else HUI.showToast(message)
+                if (_binding === origin) origin.root.showActionFeedback(result.failureDetails(frozen))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: RuntimeException) {
+                trace?.error("action_failed", packages.singleOrNull(), e)
+                if (_binding === origin) origin.root.showActionFeedback(e.localizedMessage ?: host.getString(R.string.permission_denied))
             } finally {
                 operations--
                 if (_binding === origin) {
@@ -649,9 +628,6 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             list.forEach { put(it.packageName) }
             toString()
         } else list[0].packageName)
-        HUI.showToast(
-            R.string.msg_exported, if (list.size > 1) list.size.toString() else list[0].name
-        )
     }
 
     private fun importFromClipboard() = runCatching {
@@ -674,8 +650,7 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
             HailData.saveApps()
             updateCurrentList()
         }
-        HUI.showToast(getString(R.string.msg_imported, i.toString()))
-    }
+    }.onFailure { _binding?.root?.showActionFeedback(getString(R.string.operation_failed, it.localizedMessage ?: "Unknown")) }
 
     private suspend fun importFrozenApp(): Int {
         val tagId = tag?.second ?: 0
@@ -707,7 +682,6 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                 item.updateIcon()
                 if (multiselect) {
                     updateBarTitle()
-                    HUI.showToast(R.string.tap_to_select)
                 } else deselect()
             }
 
@@ -725,7 +699,6 @@ class PagerFragment : MainFragment(), PagerAdapter.OnItemClickListener, PagerAda
                     HailData.saveApps()
                     updateCurrentList()
                 }
-                HUI.showToast(getString(R.string.msg_imported, size.toString()))
             }
 
             R.id.action_export_current -> exportToClipboard(currentApps())

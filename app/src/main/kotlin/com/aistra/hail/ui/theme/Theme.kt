@@ -1,9 +1,7 @@
 package com.aistra.hail.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
@@ -15,10 +13,9 @@ import com.aistra.hail.R
 @Composable
 fun AppTheme(content: @Composable () -> Unit) {
     val context = LocalContext.current
-    val dark = isSystemInDarkTheme()
-    val scheme = remember(context, LocalConfiguration.current, dark) {
+    val scheme = remember(context, LocalConfiguration.current) {
         fun color(id: Int) = Color(ContextCompat.getColor(context, id))
-        val base = if (dark) darkColorScheme() else lightColorScheme()
+        val base = darkColorScheme()
         base.copy(
             primary = color(R.color.md_theme_primary),
             onPrimary = color(R.color.md_theme_onPrimary),

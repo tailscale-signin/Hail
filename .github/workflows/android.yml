@@ -80,10 +80,48 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
-  publish:
+  release_readiness:
     needs: verify
     if: >-
       needs.verify.result == 'success' &&
+      github.repository == 'tailscale-signin/Hail' &&
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.publish_release == true) ||
+       (github.event_name == 'push' && startsWith(github.event.head_commit.message, '[release]')))
+    runs-on: ubuntu-latest
+    outputs:
+      repository_signing: ${{ steps.signing.outputs.available }}
+    steps:
+      - name: Select the configured signing route
+        id: signing
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_ALIAS_PASSWORD: ${{ secrets.KEYSTORE_ALIAS_PASSWORD }}
+        run: |
+          python3 - <<'PYROUTE'
+          import os
+          from pathlib import Path
+          names = ('KEYSTORE', 'KEYSTORE_PASSWORD', 'KEYSTORE_ALIAS', 'KEYSTORE_ALIAS_PASSWORD')
+          available = all(os.environ.get(name) for name in names)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'available={str(available).lower()}\n')
+          summary = ('The existing repository signing key is configured; automatic signed publication follows.'
+                     if available else
+                     'Verification passed. The optimized unsigned APK is available as Hail-unsigned-release. '
+                     'Publication is pending offline signing with the existing fork key. '
+                     'This workflow has not published a release. The offline publisher must verify the source run, '
+                     'APK checksum, existing certificate, and uploaded bytes before publication.')
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(summary + '\n')
+          print(summary)
+          PYROUTE
+
+  publish:
+    needs: [verify, release_readiness]
+    if: >-
+      needs.verify.result == 'success' &&
+      needs.release_readiness.outputs.repository_signing == 'true' &&
       github.repository == 'tailscale-signin/Hail' &&
       github.ref == 'refs/heads/main' &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish_release == true) ||

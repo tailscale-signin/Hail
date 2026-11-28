@@ -43,6 +43,18 @@ class DeviceFreezeTest {
             android.content.res.Configuration.UI_MODE_NIGHT_YES
         val dark = context.createConfigurationContext(config)
         assertEquals(android.graphics.Color.rgb(0, 255, 222), dark.getColor(com.aistra.hail.R.color.md_theme_primary))
+        // Launcher widgets may be inflated using the host's light configuration.
+        // They must use the same neutral dark surfaces and readable text as the app.
+        for (mode in listOf(android.content.res.Configuration.UI_MODE_NIGHT_NO,
+                            android.content.res.Configuration.UI_MODE_NIGHT_YES)) {
+            config.uiMode = (config.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK.inv()) or mode
+            val themed = context.createConfigurationContext(config)
+            assertEquals(android.graphics.Color.rgb(24, 24, 24), themed.getColor(com.aistra.hail.R.color.md_theme_background))
+            assertEquals(themed.getColor(com.aistra.hail.R.color.md_theme_background),
+                themed.getColor(com.aistra.hail.R.color.md_theme_surface))
+            assertEquals(android.graphics.Color.rgb(238, 238, 238), themed.getColor(com.aistra.hail.R.color.md_theme_onSurface))
+        }
+
     }
 
     @Test fun freezeRepeatThenThawLaunchAndRestoreFromBackup() = runBlocking {

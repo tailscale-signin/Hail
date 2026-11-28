@@ -1,0 +1,5 @@
+<resources>
+    <string name="dismiss_action_feedback">Dismiss</string>
+    <string name="unavailable_app_inline">This app is not installed for this profile. Long-press it for package controls.</string>
+    <string name="action_needs_attention">Action could not be completed</string>
+</resources>

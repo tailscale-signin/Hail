@@ -4,6 +4,11 @@ import sys
 import xml.etree.ElementTree as ET
 
 expected = {
+    ("BulkShortcutLauncherTest", "catalogContainsDisabledLaunchersAndUsesFixedPrivateLaunchRoute"),
+    ("BulkShortcutLauncherTest", "pinnedAppShortcutKeepsItsIdAndActionAcrossRefresh"),
+    ("AppRiskPresentationTest", "offlineCommunitySnapshotAndCoreFallbackAreAvailable"),
+    ("AppRiskPresentationTest", "appRowsResetSafetyColorsAndExpandGuidanceInline"),
+    ("AppRiskPresentationTest", "homeRowsKeepCriticalColorsWhileSelectedAndHideInactiveLabel"),
     ("DebugLogTest", "offByDefaultOrderedBoundedAndExportableAfterStopping"),
     ("DeviceFreezeTest", "freezeRepeatThenThawLaunchAndRestoreFromBackup"),
     ("DeviceFreezeTest", "privateDefaultsAndBrandResourcesArePackaged"),
@@ -39,6 +44,7 @@ for line in log.read_text().splitlines():
     elif line == "INSTRUMENTATION_CODE: -1":
         finished = True
 
+expected |= set(results)
 suite = ET.Element("testsuite", name="Hail.Android16", tests=str(len(expected)))
 failures = 0
 for cls, name in sorted(expected):

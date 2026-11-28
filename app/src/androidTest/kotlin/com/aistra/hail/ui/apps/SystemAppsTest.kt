@@ -132,7 +132,6 @@ class SystemAppsTest {
                 await(By.res(ctx.packageName, "nav_apps")).click()
                 openToolbarItem("action_apps_filter", R.string.filter_by)
                 await(text(R.string.filter_system_apps)).click()
-                await(text(R.string.action_continue)).click()
                 await(searchForApp(scenario, pkg)).longClick()
                 await(text(R.string.disable_in_settings)).click()
                 val details = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null))
@@ -170,6 +169,7 @@ class SystemAppsTest {
                     pm.getApplicationEnabledSetting(pkg) == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
                 }
                 device.waitForIdle()
+                assertFalse("A successful disable must not open a result dialog", device.hasObject(By.res("android", "button1")))
                 await(row).longClick()
                 await(text(R.string.enable_app)).click()
                 waitFor("Android enabled $pkg again") {
@@ -322,8 +322,11 @@ class SystemAppsTest {
             instrumentation.runOnMainSync { HailData.checkedList.clear(); HailData.checkedList.add(AppInfo(pkg)) }
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 await(By.res(ctx.packageName, "nav_home")).click()
-                await(text(R.string.package_inactive_here))
                 val row = By.res(ctx.packageName, "app_name").text(label)
+                await(row).click()
+                await(By.res(ctx.packageName, "action_feedback_message").text(ctx.getString(R.string.unavailable_app_inline)))
+                assertFalse("A retained app tap should stay on the page", device.hasObject(By.res(ctx.packageName, "report")))
+                assertFalse("Retained rows no longer show an inactive caption", device.hasObject(By.res(ctx.packageName, "app_availability")))
                 await(row).longClick()
                 fun report(id: Int) = By.res(ctx.packageName, "report").textContains(ctx.getString(id))
                 await(report(R.string.package_retained_here))
@@ -338,7 +341,7 @@ class SystemAppsTest {
                 await(report(R.string.package_enabled))
                 device.pressBack()
                 await(row)
-                assertTrue(device.wait(Until.gone(text(R.string.package_inactive_here)), 10_000))
+                assertFalse(device.hasObject(By.res(ctx.packageName, "app_availability")))
             }
             Log.i("HailSystemApp", "Verified retained $pkg, no mutation while absent, restored current-user Home controls")
         } finally {

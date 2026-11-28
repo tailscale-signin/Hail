@@ -5,6 +5,7 @@ import android.app.UiModeManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.content.pm.PackageManager
 import androidx.appcompat.app.AppCompatDelegate
@@ -20,6 +21,8 @@ import com.aistra.hail.utils.HShortcuts
 import com.aistra.hail.utils.HLog
 import com.aistra.hail.utils.DecisionLog
 import com.aistra.hail.utils.HUI
+import com.aistra.hail.widget.AllAppsWidget
+import com.aistra.hail.widget.HomeSurfaceReceiver
 import kotlinx.coroutines.*
 
 class HailApp : Application() {
@@ -38,6 +41,22 @@ class HailApp : Application() {
             }
         }
         if (HailData.workingMode.startsWith(HailData.DHIZUKU)) HDhizuku.init()
+        val packages = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_CHANGED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+        ContextCompat.registerReceiver(this, HomeSurfaceReceiver(), packages, ContextCompat.RECEIVER_NOT_EXPORTED)
+        appScope.launch(shortcutDispatcher) {
+            runCatching { HShortcuts.refreshPinnedAppShortcuts(); AllAppsWidget.refresh(app) }.onFailure(HLog::e)
+        }
+        appScope.launch {
+            AppManager.changes.collect {
+                runCatching { AllAppsWidget.refresh(app) }.onFailure(HLog::e)
+            }
+        }
     }
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -114,21 +133,10 @@ class HailApp : Application() {
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun setAppTheme(theme: String) {
-        if (HTarget.S) getSystemService<UiModeManager>()!!.setApplicationNightMode(
-            when (theme) {
-                HailData.THEME_LIGHT -> UiModeManager.MODE_NIGHT_NO
-                HailData.THEME_DARK -> UiModeManager.MODE_NIGHT_YES
-                else -> UiModeManager.MODE_NIGHT_AUTO
-            }
-        )
-        else AppCompatDelegate.setDefaultNightMode(
-            when (theme) {
-                HailData.THEME_LIGHT -> AppCompatDelegate.MODE_NIGHT_NO
-                HailData.THEME_DARK -> AppCompatDelegate.MODE_NIGHT_YES
-                else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
-            }
-        )
+        if (HTarget.S) getSystemService<UiModeManager>()!!.setApplicationNightMode(UiModeManager.MODE_NIGHT_YES)
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
     }
 
 

@@ -1,16 +1,20 @@
 package com.aistra.hail.ui.apps
 
 import android.content.pm.ApplicationInfo
+import android.text.TextUtils
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.widget.CompoundButton
+import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import com.aistra.hail.R
 import com.aistra.hail.databinding.ItemAppsBinding
 import com.aistra.hail.utils.AppIconCache
 import com.aistra.hail.utils.HPackages
-import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.Job
 
 class AppsAdapter : ListAdapter<InstalledRow, AppsAdapter.ViewHolder>(DIFF) {
@@ -28,6 +32,7 @@ class AppsAdapter : ListAdapter<InstalledRow, AppsAdapter.ViewHolder>(DIFF) {
 
     lateinit var onItemClickListener: OnItemClickListener
     lateinit var onItemCheckedChangeListener: OnItemCheckedChangeListener
+    private val expandedGuidance = mutableSetOf<String>()
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder = ViewHolder(
         ItemAppsBinding.inflate(LayoutInflater.from(parent.context), parent, false)
@@ -78,17 +83,37 @@ class AppsAdapter : ListAdapter<InstalledRow, AppsAdapter.ViewHolder>(DIFF) {
             binding.appName.apply {
                 val name = row.label
                 text = if (!row.grayscale && frozen) "❄️$name" else name
-                isEnabled = !row.grayscale || !frozen
-                if (!row.installed) setTextColor(
-                    MaterialColors.getColor(
-                        this, androidx.appcompat.R.attr.colorError
-                    )
-                )
+                val riskColor = AppRiskPresentation.nameColor(row.risk)
+                // Safety colors remain visible when a package is frozen or retained for another profile.
+                isEnabled = riskColor != null || !row.grayscale || !frozen
+                if (riskColor != null) setTextColor(ContextCompat.getColor(context, riskColor))
                 else setTextColor(nameColors)
             }
             binding.appDesc.apply {
                 text = pkg
                 isEnabled = !row.grayscale || !frozen
+            }
+            binding.appRisk.apply {
+                text = AppRiskPresentation.label(context, row.risk)
+                setTextColor(ContextCompat.getColor(context, AppRiskPresentation.badgeColor(row.risk)))
+            }
+            binding.appRiskReason.apply {
+                text = AppRiskPresentation.explanation(context, row.risk)
+                fun showGuidance() {
+                    val expanded = pkg in expandedGuidance
+                    maxLines = if (expanded) Int.MAX_VALUE else 2
+                    ellipsize = if (expanded) null else TextUtils.TruncateAt.END
+                }
+                showGuidance()
+                setOnClickListener {
+                    if (!expandedGuidance.remove(pkg)) expandedGuidance.add(pkg)
+                    showGuidance()
+                }
+                ViewCompat.replaceAccessibilityAction(this,
+                    AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_CLICK,
+                    context.getString(R.string.app_risk_description_toggle)) { view, _ ->
+                    view.performClick()
+                }
             }
             binding.appStar.isChecked = row.checked
             updating = false

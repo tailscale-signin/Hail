@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="app_name_system">#FFD54F</color>
+    <color name="app_name_critical">#FF6B6B</color>
+    <color name="app_risk_risky">#FFB45B</color>
+    <color name="app_risk_recommended">#8BD78F</color>
+</resources>

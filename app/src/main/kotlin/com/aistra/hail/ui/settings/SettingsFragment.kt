@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ComposeView
@@ -59,6 +60,8 @@ import com.aistra.hail.ui.main.MainFragment
 import com.aistra.hail.ui.theme.AppTheme
 import com.aistra.hail.utils.*
 import com.aistra.hail.ui.PrivateDialogBuilder
+import com.aistra.hail.widget.AllAppsWidget
+import androidx.lifecycle.LifecycleEventObserver
 import com.google.android.material.textview.MaterialTextView
 import com.rosan.dhizuku.api.Dhizuku
 import com.rosan.dhizuku.api.DhizukuRequestPermissionListener
@@ -105,6 +108,16 @@ class SettingsFragment : MainFragment(), MenuProvider {
     @Composable
     private fun SettingsScreen() {
         BackupDialog()
+        val widgetMessage by AllAppsWidget.pinMessage.collectAsState()
+        val repairMessage = remember { mutableStateOf(R.string.home_surfaces_repair_summary) }
+        DisposableEffect(viewLifecycleOwner) {
+            val lifecycle = viewLifecycleOwner.lifecycle
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) AllAppsWidget.updateSettingsState(requireContext())
+            }
+            lifecycle.addObserver(observer)
+            onDispose { lifecycle.removeObserver(observer) }
+        }
         val autoFreezeAfterLock = rememberPreferenceState(HailData.AUTO_FREEZE_AFTER_LOCK, false)
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             listPreference(
@@ -182,17 +195,11 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 onClick = { saveDebugLog.launch(DecisionLog.suggestedName()) })
             horizontalDivider()
             preferenceCategory(key = "customize", title = { Text(text = stringResource(R.string.title_customize)) })
-            listPreference(
+            preference(
                 key = HailData.APP_THEME,
-                defaultValue = HailData.THEME_DARK,
-                onValueChange = { _, value ->
-                    app.setAppTheme(value)
-                    true
-                },
-                values = HailData.APP_THEME_VALUES,
-                entriesId = R.array.app_theme_entries,
-                titleId = R.string.app_theme,
-                icon = Icons.Outlined.DarkMode
+                title = { Text(stringResource(R.string.app_theme)) },
+                summary = { Text(stringResource(R.string.theme_dark_grey)) },
+                icon = { Icon(Icons.Outlined.DarkMode, contentDescription = null) }
             )
             listPreference(
                 key = HailData.ICON_PACK,
@@ -332,14 +339,27 @@ class SettingsFragment : MainFragment(), MenuProvider {
                 onClick = ::addPinShortcut
             )
             preference(
-                key = "add_all_app_shortcuts",
-                title = { Text(stringResource(R.string.add_all_app_shortcuts)) },
-                summary = { Text(stringResource(R.string.add_all_app_shortcuts_summary)) },
+                key = "add_all_apps_widget",
+                title = { Text(stringResource(R.string.all_apps_widget_add)) },
+                summary = { Text(stringResource(widgetMessage)) },
                 icon = { Icon(Icons.Outlined.Apps, contentDescription = null) },
+                onClick = { AllAppsWidget.requestPin(requireContext()) }
+            )
+            preference(
+                key = "refresh_home_surfaces",
+                title = { Text(stringResource(R.string.home_surfaces_repair)) },
+                summary = { Text(stringResource(repairMessage.value)) },
+                icon = { Icon(Icons.Outlined.Refresh, contentDescription = null) },
                 onClick = {
-                    val dialogs = childFragmentManager
-                    if (!dialogs.isStateSaved && dialogs.findFragmentByTag(BulkShortcutDialog.TAG) == null) {
-                        BulkShortcutDialog().showNow(dialogs, BulkShortcutDialog.TAG)
+                    lifecycleScope.launch {
+                        val refreshed = withContext(Dispatchers.IO) {
+                            runCatching {
+                                AllAppsWidget.refresh(app)
+                                HShortcuts.refreshPinnedAppShortcuts()
+                            }.onFailure(HLog::e).getOrDefault(false)
+                        }
+                        repairMessage.value = if (refreshed) R.string.home_surfaces_refreshed
+                            else R.string.home_surfaces_refresh_failed
                     }
                 }
             )

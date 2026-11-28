@@ -1,0 +1,1 @@
+Dark-grey theme; quiet freeze/unfreeze actions; inline Canta-style app risk labels with yellow system and red critical names. Add all launchable apps in one scrollable home-screen widget with one launcher approval. Stable shortcut refresh, widget restore and launcher-reset recovery. Existing system-app disable controls retained.
