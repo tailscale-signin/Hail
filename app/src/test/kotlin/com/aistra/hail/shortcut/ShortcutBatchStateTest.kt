@@ -188,12 +188,12 @@ class ShortcutBatchStateTest {
     @Test fun explicitRetryCanReplaceAStaleApprovalButPreservesOneArrivingDuringTheRead() {
         val approved = requested(batch()).recordApproval("batch", "request", "app.one").paused("Waiting")
         val retry = approved.resumeWithPins("batch", "request", emptySet(), skip = false, manual = false,
-            now = 999, retry = true, acceptedBeforeRead = true)
+            now = 999, retry = true, approvedBeforeRead = true)
         assertTrue(retry.active)
         assertNull(retry.awaiting)
         assertEquals("app.one", retry.current)
         val late = approved.resumeWithPins("batch", "request", emptySet(), skip = false, manual = false,
-            now = 999, retry = true, acceptedBeforeRead = false)
+            now = 999, retry = true, approvedBeforeRead = false)
         assertEquals("request", late.awaiting!!.requestId)
         assertTrue(late.awaiting!!.approvalReceived)
         assertEquals(0, late.completed)
@@ -204,7 +204,7 @@ class ShortcutBatchStateTest {
             it.copy(awaiting = it.awaiting!!.copy(confirmationObserved = true, automationClicked = true))
         }.paused("Interrupted")
         val resumed = clicked.resumeWithPins("batch", "request", emptySet(), skip = false,
-            manual = false, now = 999, acceptedBeforeRead = true)
+            manual = false, now = 999, clickedBeforeRead = true)
         assertTrue(resumed.active)
         assertEquals("request", resumed.awaiting!!.requestId)
         assertFalse(resumed.awaiting!!.approvalReceived)
@@ -227,15 +227,36 @@ class ShortcutBatchStateTest {
             it.copy(awaiting = it.awaiting!!.copy(confirmationObserved = true, automationClicked = true))
         }.paused("Waiting")
         val retry = clicked.resumeWithPins("batch", "request", emptySet(), skip = false,
-            manual = false, now = 999, retry = true, acceptedBeforeRead = true)
+            manual = false, now = 999, retry = true, clickedBeforeRead = true)
         assertTrue(retry.active)
         assertNull(retry.awaiting)
         assertEquals("app.one", retry.current)
         val pinned = clicked.resumeWithPins("batch", "request", setOf("app.one"), skip = false,
-            manual = false, now = 999, retry = true, acceptedBeforeRead = true)
+            manual = false, now = 999, retry = true, clickedBeforeRead = true)
         assertEquals(listOf("app.one"), pinned.added)
         assertEquals("app.two", pinned.current)
         assertNull(pinned.awaiting)
+    }
+
+    @Test fun retryPreservesFreshCallbackAfterKnownClickWhenPinReadbackStillLags() {
+        val beforeRead = requested(batch()).let {
+            it.copy(awaiting = it.awaiting!!.copy(confirmationObserved = true, automationClicked = true))
+        }.paused("Waiting")
+        val callbackDuringRead = beforeRead.recordApproval("batch", "request", "app.one")
+        val resumed = callbackDuringRead.resumeWithPins("batch", "request", emptySet(), skip = false,
+            manual = false, now = 999, retry = true,
+            approvedBeforeRead = beforeRead.awaiting!!.approvalReceived, clickedBeforeRead = true)
+        assertTrue(resumed.active)
+        assertEquals("request", resumed.awaiting!!.requestId)
+        assertTrue(resumed.awaiting!!.approvalReceived)
+        assertTrue(resumed.awaiting!!.automationClicked)
+        assertEquals(999L, resumed.awaiting!!.requestedAtElapsed)
+        assertEquals(0, resumed.completed)
+        val dismissed = resumed.copy(awaiting = resumed.awaiting!!.copy(confirmationDismissed = true))
+        val completed = dismissed.confirmPinned(setOf("app.one"))
+        assertEquals(listOf("app.one"), completed.added)
+        assertEquals("app.two", completed.current)
+        assertNull(completed.awaiting)
     }
 
     @Test fun merelyObservingAConfirmationDoesNotPreventResumeFromRequestingItAgain() {

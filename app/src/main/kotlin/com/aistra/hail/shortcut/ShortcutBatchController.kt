@@ -176,7 +176,9 @@ object ShortcutBatchController {
         // Compare request identity, not the complete state: a legitimate callback may have arrived
         // during the suspended pin read. Both Resume and Retry reconcile existing pins first.
         val written = change { current -> current.resumeWithPins(initial.batchId, pending?.requestId,
-            pinned, skip, manual, SystemClock.elapsedRealtime(), retry, pending?.acceptanceObserved == true) } ?: return
+            pinned, skip, manual, SystemClock.elapsedRealtime(), retry,
+            approvedBeforeRead = pending?.approvalReceived == true,
+            clickedBeforeRead = pending?.let { it.confirmationObserved && it.automationClicked } == true) } ?: return
         written.saved.await()
         if (pending != null && written.state.awaiting?.requestId != pending.requestId) {
             callback(pending, PendingIntent.FLAG_NO_CREATE)?.cancel()
