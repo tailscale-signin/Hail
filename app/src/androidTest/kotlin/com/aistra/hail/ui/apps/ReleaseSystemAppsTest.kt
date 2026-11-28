@@ -12,8 +12,6 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.UiScrollable
-import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import com.aistra.hail.R
 import org.junit.Assert.*
@@ -85,10 +83,24 @@ class ReleaseSystemAppsTest {
     }
 
     private fun settingsItem(id: Int) {
-        val label = context.getString(id)
-        if (device.findObject(By.text(label)) == null)
-            UiScrollable(UiSelector().scrollable(true)).scrollIntoView(UiSelector().text(label))
-        await(By.text(label)).click()
+        val selector = By.pkg(target).text(context.getString(id))
+        await(res("toolbar").hasDescendant(text(R.string.title_settings)))
+        // Lazy preferences have no accessibility node until they enter the viewport.
+        // Recheck after each gesture instead of trusting scrollIntoView's end-of-list result.
+        repeat(12) {
+            device.findObject(selector)?.let { item ->
+                item.click()
+                return
+            }
+            val bounds = await(By.pkg(target).scrollable(true)).visibleBounds
+            assertTrue("Settings list must be visible", bounds.width() > 0 && bounds.height() > 0)
+            assertTrue("Could not scroll Settings to ${context.getString(id)}", device.swipe(
+                bounds.centerX(), bounds.top + bounds.height() * 3 / 4,
+                bounds.centerX(), bounds.top + bounds.height() / 4, 30
+            ))
+            device.waitForIdle(1_000)
+        }
+        await(selector).click()
     }
 
     private fun exportLog(server: String) {
